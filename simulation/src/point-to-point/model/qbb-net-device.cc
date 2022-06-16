@@ -448,7 +448,18 @@ namespace ns3 {
 		m_txMachineState = BUSY;
 		m_currentPkt = p;
 		m_phyTxBeginTrace(m_currentPkt);
-		Time txTime = Seconds(m_bps.CalculateTxTime(p->GetSize()));
+
+		//shishi
+		uint32_t pkt_size = p->GetSize();
+		CustomHeader ch(CustomHeader::L2_Header | CustomHeader::L3_Header | CustomHeader::L4_Header);
+		ch.getInt = 1; // parse INT header
+		p->PeekHeader(ch);
+		uint16_t nhop = ch.ack.ih.nhop;
+		uint16_t maxhop = ch.ack.ih.maxHop;
+		pkt_size -= ((maxhop-nhop)*8+2);
+		Time txTime = Seconds (m_bps.CalculateTxTime (pkt_size));
+
+		// Time txTime = Seconds(m_bps.CalculateTxTime(p->GetSize()));
 		Time txCompleteTime = txTime + m_tInterframeGap;
 		NS_LOG_LOGIC("Schedule TransmitCompleteEvent in " << txCompleteTime.GetSeconds() << "sec");
 		Simulator::Schedule(txCompleteTime, &QbbNetDevice::TransmitComplete, this);

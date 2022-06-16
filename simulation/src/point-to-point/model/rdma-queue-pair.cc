@@ -39,6 +39,7 @@ RdmaQueuePair::RdmaQueuePair(uint16_t pg, Ipv4Address _sip, Ipv4Address _dip, ui
 	mlx.m_alpha = 1;
 	mlx.m_alpha_cnp_arrived = false;
 	mlx.m_first_cnp = true;
+	mlx.m_first_change = true;//shishi
 	mlx.m_decrease_cnp_arrived = false;
 	mlx.m_rpTimeStage = 0;
 	hp.m_lastUpdateSeq = 0;

@@ -40,6 +40,7 @@ public:
 		double m_alpha;
 		bool m_alpha_cnp_arrived; // indicate if CNP arrived in the last slot
 		bool m_first_cnp; // indicate if the current CNP is the first CNP
+		bool m_first_change;//shishi: indicate if the cc change to the dcqcn
 		EventId m_eventDecreaseRate;
 		bool m_decrease_cnp_arrived; // indicate if CNP arrived in the last slot
 		uint32_t m_rpTimeStage;
