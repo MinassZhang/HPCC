@@ -47,8 +47,6 @@ SwitchNode::SwitchNode(){
 	m_ecmpSeed = m_id;
 	m_node_type = 1;
 	m_mmu = CreateObject<SwitchMmu>();
-	//shishi
-	//cm = new CountMin(4,16384);
 	for (uint32_t i = 0; i < pCnt; i++)
 		for (uint32_t j = 0; j < pCnt; j++)
 			for (uint32_t k = 0; k < qCnt; k++)
@@ -106,6 +104,46 @@ void SwitchNode::CheckAndSendResume(uint32_t inDev, uint32_t qIndex){
 }
 
 void SwitchNode::SendToDev(Ptr<Packet>p, CustomHeader &ch){
+	// printf("switch: %08x %08x: %u\n",ch.sip,ch.dip,p->GetSize());
+	int idx = GetOutDev(p, ch);
+	if (idx >= 0){
+		NS_ASSERT_MSG(m_devices[idx]->IsLinkUp(), "The routing table look up should return link that is up");
+
+		// determine the qIndex
+		uint32_t qIndex;
+		if (ch.l3Prot == 0xFF || ch.l3Prot == 0xFE || (m_ackHighPrio && (ch.l3Prot == 0xFD || ch.l3Prot == 0xFC))){  //QCN or PFC or NACK, go highest priority
+			qIndex = 0;
+		}else{
+			qIndex = (ch.l3Prot == 0x06 ? 1 : ch.udp.pg); // if TCP, put to queue 1
+		}
+
+		// admission control
+		FlowIdTag t;
+		p->PeekPacketTag(t);
+		uint32_t inDev = t.GetFlowId();
+
+		//shishi
+		uint32_t pkt_size = p->GetSize() - (ch.udp.ih.maxHop-ch.udp.ih.nhop) * 8;
+		// uint32_t pkt_size = p->GetSize();
+		if((ch.l3Prot == 0xFC || ch.l3Prot == 0xFD)  && pkt_size < 60)
+			pkt_size = 60;
+		if (qIndex != 0){ //not highest priority
+			if (m_mmu->CheckIngressAdmission(inDev, qIndex, pkt_size) && m_mmu->CheckEgressAdmission(idx, qIndex, pkt_size)){			// Admission control
+				m_mmu->UpdateIngressAdmission(inDev, qIndex, pkt_size);
+				m_mmu->UpdateEgressAdmission(idx, qIndex, pkt_size);
+			}else{
+				return; // Drop
+			}
+			CheckAndSendPfc(inDev, qIndex);
+		}
+		m_bytes[inDev][idx][qIndex] += (pkt_size);
+		m_devices[idx]->SwitchSend(qIndex, p, ch);
+	}else
+		return; // Drop
+}
+
+void SwitchNode::SendToDev1(Ptr<Packet>p, CustomHeader &ch){
+	// printf("switch: %08x %08x: %u\n",ch.sip,ch.dip,p->GetSize());
 	int idx = GetOutDev(p, ch);
 	if (idx >= 0){
 		NS_ASSERT_MSG(m_devices[idx]->IsLinkUp(), "The routing table look up should return link that is up");
@@ -126,6 +164,7 @@ void SwitchNode::SendToDev(Ptr<Packet>p, CustomHeader &ch){
 		FlowIdTag t;
 		p->PeekPacketTag(t);
 		uint32_t inDev = t.GetFlowId();
+
 		if (qIndex != 0){ //not highest priority
 			if (m_mmu->CheckIngressAdmission(inDev, qIndex, p->GetSize()) && m_mmu->CheckEgressAdmission(idx, qIndex, p->GetSize())){			// Admission control
 				m_mmu->UpdateIngressAdmission(inDev, qIndex, p->GetSize());
@@ -135,7 +174,7 @@ void SwitchNode::SendToDev(Ptr<Packet>p, CustomHeader &ch){
 			}
 			CheckAndSendPfc(inDev, qIndex);
 		}
-		m_bytes[inDev][idx][qIndex] += p->GetSize();
+		m_bytes[inDev][idx][qIndex] += (p->GetSize());
 		m_devices[idx]->SwitchSend(qIndex, p, ch);
 	}else
 		return; // Drop
@@ -200,18 +239,20 @@ bool SwitchNode::SwitchReceiveFromDevice(Ptr<NetDevice> device, Ptr<Packet> pack
 
 //shishi codes
 void SwitchNode::SwitchNotifyDequeue(uint32_t ifIndex, uint32_t qIndex, Ptr<Packet> p){
+	printf("switch id %d\n",m_ecmpSeed);
 	if(m_ccMode == 2) {
 		FlowIdTag t;
 		p->PeekPacketTag(t);
 		cnt++;
 		//get sip dip
-		PppHeader ppp1;
-		Ipv4Header h1;
-		uint32_t p_size = p->GetSize();
-		p->RemoveHeader(ppp1);
-		p->RemoveHeader(h1);
-		uint32_t sip = h1.GetSource().Get();
-		uint32_t dip = h1.GetDestination().Get();
+		CustomHeader ch(CustomHeader::L2_Header | CustomHeader::L3_Header | CustomHeader::L4_Header);
+		ch.getInt = 1; // parse INT header
+		p->PeekHeader(ch);
+		uint32_t p_size = p->GetSize()- (ch.udp.ih.maxHop-ch.udp.ih.nhop) * 8;
+		if((ch.l3Prot == 0xFC || ch.l3Prot == 0xFD)  && p_size < 60)
+			p_size = 60;
+		uint32_t sip = ch.sip;
+		uint32_t dip = ch.dip;
 		uint64_t edge = ((uint64_t)sip << 32) | dip;
 		//cm->Update(edge,p_size);
 		if(m_heap.find(edge) != m_heap.end()) {
@@ -222,15 +263,16 @@ void SwitchNode::SwitchNotifyDequeue(uint32_t ifIndex, uint32_t qIndex, Ptr<Pack
 		}
 		uint64_t judgeFlow = m_heap[edge];
 		//printf("%d %d %d %d\n",sip,dip,p_size,judgeFlow);
-		p->AddHeader(h1);
-		p->AddHeader(ppp1);
+
 		
 		if (qIndex != 0){
 			uint32_t inDev = t.GetFlowId();
-			m_mmu->RemoveFromIngressAdmission(inDev, qIndex, p->GetSize());
-			m_mmu->RemoveFromEgressAdmission(ifIndex, qIndex, p->GetSize());
-			m_bytes[inDev][ifIndex][qIndex] -= p->GetSize();
-			if ((judgeFlow > UINT64_MAX)){
+			// m_mmu->RemoveFromIngressAdmission(inDev, qIndex, p->GetSize());
+			// m_mmu->RemoveFromEgressAdmission(ifIndex, qIndex, p->GetSize());
+			m_mmu->RemoveFromIngressAdmission(inDev, qIndex, p_size);
+			m_mmu->RemoveFromEgressAdmission(ifIndex, qIndex, p_size);
+			m_bytes[inDev][ifIndex][qIndex] -= p_size;
+			if (judgeFlow > UINT64_MAX){
 				PppHeader ppp;
 				Ipv4Header h;
 				bool egressCongested = m_mmu->ShouldSendCN(ifIndex, qIndex);
@@ -255,15 +297,16 @@ void SwitchNode::SwitchNotifyDequeue(uint32_t ifIndex, uint32_t qIndex, Ptr<Pack
 				Ptr<QbbNetDevice> dev = DynamicCast<QbbNetDevice>(m_devices[ifIndex]);
 				//printf("in switch %d, flow_size:%lu\n",h.GetCC(),judgeFlow);
 				ih->PushHop(Simulator::Now().GetTimeStep(), m_txBytes[ifIndex], dev->GetQueue()->GetNBytesTotal(), dev->GetDataRate().GetBitRate());
-				// printf("%08x %08x nhop:%u qindex:%u\n",sip,dip,ih->nhop,qIndex);
+				p_size += 8;
+				printf("%lu,%08x,%08x,switchID=%u,ifIndex=%u,%lu,%u,%u,%.3lf\n",Simulator::Now().GetTimeStep(),ch.sip,ch.dip,m_ecmpSeed,ifIndex,m_txBytes[ifIndex],p_size,dev->GetQueue()->GetNBytesTotal(),dev->GetDataRate().GetBitRate() * 1e-9);
 			}
 		}
 		if(cnt>100000) {
 			cnt = 0;
 			m_heap.clear();
 		}
-		m_txBytes[ifIndex] += p->GetSize();
-		m_lastPktSize[ifIndex] = p->GetSize();
+		m_txBytes[ifIndex] += p->GetSize();//p->getsize
+		m_lastPktSize[ifIndex] = p->GetSize();//p->getsize
 		m_lastPktTs[ifIndex] = Simulator::Now().GetTimeStep();
 	}
 	else {
@@ -281,6 +324,9 @@ void SwitchNode::SwitchNotifyDequeue(uint32_t ifIndex, uint32_t qIndex, Ptr<Pack
 					Ipv4Header h;
 					p->RemoveHeader(ppp);
 					p->RemoveHeader(h);
+					uint32_t sip = h.GetSource().Get();
+					uint32_t dip = h.GetDestination().Get();
+					// printf("%08x %08x Switch SetEcn \n",sip,dip);
 					h.SetEcn((Ipv4Header::EcnType)0x03);
 					p->AddHeader(h);
 					p->AddHeader(ppp);

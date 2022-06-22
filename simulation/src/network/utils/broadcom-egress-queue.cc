@@ -86,6 +86,30 @@ namespace ns3 {
 		return true;
 	}
 
+	bool
+		BEgressQueue::DoEnqueue1(Ptr<Packet> p, uint32_t qIndex)//shishi
+	{
+		NS_LOG_FUNCTION(this << p);
+		CustomHeader ch(CustomHeader::L2_Header | CustomHeader::L3_Header | CustomHeader::L4_Header);
+		ch.getInt = 1;
+		p->PeekHeader(ch);
+		uint32_t pkt_size = p->GetSize() - ((ch.ack.ih.maxHop-ch.ack.ih.nhop)*8);
+		if((ch.l3Prot == 0xFC || ch.l3Prot == 0xFD) && pkt_size < 60)
+			pkt_size = 60;
+		if (m_bytesInQueueTotal + pkt_size < m_maxBytes)  //infinite queue
+		{
+			CustomHeader cj;
+			m_queues[qIndex]->Enqueue(p);
+			m_bytesInQueueTotal += pkt_size;
+			m_bytesInQueue[qIndex] += pkt_size;
+		}
+		else
+		{
+			return false;
+		}
+		return true;
+	}
+
 	Ptr<Packet>
 		BEgressQueue::DoDequeueRR(bool paused[]) //this is for switch only
 	{
@@ -138,6 +162,64 @@ namespace ns3 {
 		return 0;
 	}
 
+	Ptr<Packet>
+		BEgressQueue::DoDequeueRR1(bool paused[]) //this is for switch only shishi
+	{
+		NS_LOG_FUNCTION(this);
+
+		if (m_bytesInQueueTotal == 0)
+		{
+			NS_LOG_LOGIC("Queue empty");
+			return 0;
+		}
+		bool found = false;
+		uint32_t qIndex;
+
+		if (m_queues[0]->GetNPackets() > 0) //0 is the highest priority
+		{
+			found = true;
+			qIndex = 0;
+		}
+		else
+		{
+			if (!found)
+			{
+				for (qIndex = 1; qIndex <= qCnt; qIndex++)
+				{
+					if (!paused[(qIndex + m_rrlast) % qCnt] && m_queues[(qIndex + m_rrlast) % qCnt]->GetNPackets() > 0)  //round robin
+					{
+						found = true;
+						break;
+					}
+				}
+				qIndex = (qIndex + m_rrlast) % qCnt;
+			}
+		}
+		if (found)
+		{
+			Ptr<Packet> p = m_queues[qIndex]->Dequeue();
+			m_traceBeqDequeue(p, qIndex);
+			CustomHeader ch(CustomHeader::L2_Header | CustomHeader::L3_Header | CustomHeader::L4_Header);
+			ch.getInt = 1;
+			p->PeekHeader(ch);
+			uint32_t pkt_size = p->GetSize() - ((ch.ack.ih.maxHop-ch.ack.ih.nhop)*8);
+			if((ch.l3Prot == 0xFC || ch.l3Prot == 0xFD)  && pkt_size < 60 )
+				pkt_size = 60;
+			m_bytesInQueueTotal -= pkt_size;
+			m_bytesInQueue[qIndex] -= pkt_size;
+			if (qIndex != 0)
+			{
+				m_rrlast = qIndex;
+			}
+			m_qlast = qIndex;
+			NS_LOG_LOGIC("Popped " << p);
+			NS_LOG_LOGIC("Number bytes " << m_bytesInQueueTotal);
+			return p;
+		}
+		NS_LOG_LOGIC("Nothing can be sent");
+		return 0;
+	}
+
 	bool
 		BEgressQueue::Enqueue(Ptr<Packet> p, uint32_t qIndex)
 	{
@@ -153,6 +235,36 @@ namespace ns3 {
 			m_traceBeqEnqueue(p, qIndex);
 
 			uint32_t size = p->GetSize();
+			m_nBytes += size;
+			m_nTotalReceivedBytes += size;
+
+			m_nPackets++;
+			m_nTotalReceivedPackets++;
+		}
+		return retval;
+	}
+
+	bool
+		BEgressQueue::Enqueue1(Ptr<Packet> p, uint32_t qIndex)//shishi
+	{
+		NS_LOG_FUNCTION(this << p);
+		//
+		// If DoEnqueue fails, Queue::Drop is called by the subclass
+		//
+		bool retval = DoEnqueue1(p, qIndex);
+		if (retval)
+		{
+			NS_LOG_LOGIC("m_traceEnqueue (p)");
+			m_traceEnqueue(p);
+			m_traceBeqEnqueue(p, qIndex);
+
+			CustomHeader ch(CustomHeader::L2_Header | CustomHeader::L3_Header | CustomHeader::L4_Header);
+			ch.getInt = 1;
+			p->PeekHeader(ch);
+			uint32_t pkt_size = p->GetSize() - ((ch.ack.ih.maxHop-ch.ack.ih.nhop)*8);
+			if((ch.l3Prot == 0xFC || ch.l3Prot == 0xFD)  && pkt_size < 60)
+				pkt_size = 60;
+			uint32_t size = pkt_size;
 			m_nBytes += size;
 			m_nTotalReceivedBytes += size;
 
@@ -179,6 +291,31 @@ namespace ns3 {
 		return packet;
 	}
 
+	Ptr<Packet>
+		BEgressQueue::DequeueRR1(bool paused[])//shishi
+	{
+		NS_LOG_FUNCTION(this);
+		Ptr<Packet> packet = DoDequeueRR1(paused);
+		if (packet != 0)
+		{
+			CustomHeader ch(CustomHeader::L2_Header | CustomHeader::L3_Header | CustomHeader::L4_Header);
+			ch.getInt = 1;
+			packet->PeekHeader(ch);
+			uint32_t pkt_size = packet->GetSize() - ((ch.ack.ih.maxHop-ch.ack.ih.nhop)*8);
+			if((ch.l3Prot == 0xFC || ch.l3Prot == 0xFD)  && pkt_size < 60)
+				pkt_size = 60;
+
+			NS_ASSERT(m_nBytes >= pkt_size);
+			NS_ASSERT(m_nPackets > 0);
+
+			m_nBytes -= pkt_size;
+			m_nPackets--;
+			NS_LOG_LOGIC("m_traceDequeue (packet)");
+			m_traceDequeue(packet);
+		}
+		return packet;
+	}
+
 	bool
 		BEgressQueue::DoEnqueue(Ptr<Packet> p)	//for compatiability
 	{
@@ -190,6 +327,34 @@ namespace ns3 {
 			m_queues[qIndex]->Enqueue(p);
 			m_bytesInQueueTotal += p->GetSize();
 			m_bytesInQueue[qIndex] += p->GetSize();
+		}
+		else
+		{
+			return false;
+
+		}
+		return true;
+	}
+
+	bool
+		BEgressQueue::DoEnqueue1(Ptr<Packet> p)	//for compatiability shishi
+	{
+		std::cout << "Warning: Call Broadcom queues without priority\n";
+		uint32_t qIndex = 0;
+		NS_LOG_FUNCTION(this << p);
+
+		CustomHeader ch(CustomHeader::L2_Header | CustomHeader::L3_Header | CustomHeader::L4_Header);
+		ch.getInt = 1;
+		p->PeekHeader(ch);
+		uint32_t pkt_size = p->GetSize() - ((ch.ack.ih.maxHop-ch.ack.ih.nhop)*8);
+		if((ch.l3Prot == 0xFC || ch.l3Prot == 0xFD)  && pkt_size < 60)
+			pkt_size = 60;
+
+		if (m_bytesInQueueTotal + pkt_size < m_maxBytes)
+		{
+			m_queues[qIndex]->Enqueue(p);
+			m_bytesInQueueTotal += pkt_size;
+			m_bytesInQueue[qIndex] += pkt_size;
 		}
 		else
 		{

@@ -38,7 +38,9 @@ namespace ns3 {
 		BEgressQueue();
 		virtual ~BEgressQueue();
 		bool Enqueue(Ptr<Packet> p, uint32_t qIndex);
+		bool Enqueue1(Ptr<Packet> p, uint32_t qIndex);//shishi
 		Ptr<Packet> DequeueRR(bool paused[]);
+		Ptr<Packet> DequeueRR1(bool paused[]);//shishi
 		uint32_t GetNBytes(uint32_t qIndex) const;
 		uint32_t GetNBytesTotal() const;
 		uint32_t GetLastQueue();
@@ -48,9 +50,12 @@ namespace ns3 {
 
 	private:
 		bool DoEnqueue(Ptr<Packet> p, uint32_t qIndex);
+		bool DoEnqueue1(Ptr<Packet> p, uint32_t qIndex);//shishi
 		Ptr<Packet> DoDequeueRR(bool paused[]);
+		Ptr<Packet> DoDequeueRR1(bool paused[]);//shishi
 		//for compatibility
 		virtual bool DoEnqueue(Ptr<Packet> p);
+		virtual bool DoEnqueue1(Ptr<Packet> p);//shishi
 		virtual Ptr<Packet> DoDequeue(void);
 		virtual Ptr<const Packet> DoPeek(void) const;
 		double m_maxBytes; //total bytes limit
@@ -64,3 +69,4 @@ namespace ns3 {
 } // namespace ns3
 
 #endif /* DROPTAIL_H */
+
