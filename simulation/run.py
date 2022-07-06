@@ -63,7 +63,7 @@ QLEN_MON_END 3000000000
 """
 if __name__ == "__main__":
 	parser = argparse.ArgumentParser(description='run simulation')
-	parser.add_argument('--cc', dest='cc', action='store', default='hp', help="hp/dcqcn/timely/dctcp/hpccPint")
+	parser.add_argument('--cc', dest='cc', action='store', default='hp', help="hp/dcqcn/timely/dctcp/hpccPint/hyper")
 	parser.add_argument('--trace', dest='trace', action='store', default='flow', help="the name of the flow file")
 	parser.add_argument('--bw', dest="bw", action='store', default='50', help="the NIC bandwidth")
 	parser.add_argument('--down', dest='down', action='store', default='0 0 0', help="link down event")
@@ -139,9 +139,9 @@ if __name__ == "__main__":
 		config = config_template.format(bw=bw, trace=trace, topo=topo, cc=args.cc, mode=7, t_alpha=1, t_dec=4, t_inc=300, g=0.00390625, ai=ai, hai=hai, dctcp_ai=1000, has_win=1, vwin=1, us=0, u_tgt=u_tgt, mi=mi, int_multi=1, pint_log_base=pint_log_base, pint_prob=pint_prob, ack_prio=1, link_down=args.down, failure=failure, kmax_map=kmax_map, kmin_map=kmin_map, pmax_map=pmax_map, buffer_size=bfsz, enable_tr=enable_tr)
 	elif args.cc == "hpccPint":
 		ai = 10 * bw / 25;
-		if args.hpai > 0:
-			ai = args.hpai
-		hai = ai # useless
+		# if args.hpai > 0:
+		# 	ai = args.hpai
+		hai = 50 * bw /25 # useless
 		int_multi = bw / 25;
 		cc = "%s%d"%(args.cc, args.utgt)
 		if (mi > 0):
@@ -152,6 +152,20 @@ if __name__ == "__main__":
 		cc += "p%.3f"%pint_prob
 		config_name = "mix/config_%s_%s_%s%s.txt"%(topo, trace, cc, failure)
 		config = config_template.format(bw=bw, trace=trace, topo=topo, cc=cc, mode=10, t_alpha=1, t_dec=4, t_inc=300, g=0.00390625, ai=ai, hai=hai, dctcp_ai=1000, has_win=1, vwin=1, us=1, u_tgt=u_tgt, mi=mi, int_multi=int_multi, pint_log_base=pint_log_base, pint_prob=pint_prob, ack_prio=0, link_down=args.down, failure=failure, kmax_map=kmax_map, kmin_map=kmin_map, pmax_map=pmax_map, buffer_size=bfsz, enable_tr=enable_tr)
+	elif args.cc == "hyper" :
+		ai = 10 * bw / 25
+		hai = 50 * bw /25
+		if args.hpai > 0:
+			ai = args.hpai
+		int_multi = bw / 25;
+		cc = "%s%d"%(args.cc, args.utgt)
+		if (mi > 0):
+			cc += "mi%d"%mi
+		if args.hpai > 0:
+			cc += "ai%d"%ai
+		config_name = "mix/config_%s_%s_%s%s.txt"%(topo, trace, cc, failure)
+		#config = config_template.format(bw=bw, trace=trace, topo=topo, cc=cc, mode=2, t_alpha=1, t_dec=4, t_inc=300, g=0.00390625, ai=ai, hai=hai, dctcp_ai=1000, has_win=1, vwin=1, us=0, u_tgt=u_tgt, mi=mi, int_multi=int_multi, pint_log_base=pint_log_base, pint_prob=pint_prob, ack_prio=0, link_down=args.down, failure=failure, kmax_map=kmax_map, kmin_map=kmin_map, pmax_map=pmax_map, buffer_size=bfsz, enable_tr=enable_tr)
+		config = config_template.format(bw=bw, trace=trace, topo=topo, cc=cc, mode=2, t_alpha=1, t_dec=4, t_inc=300, g=0.00390625, ai=ai, hai=hai, dctcp_ai=1000, has_win=1, vwin=1, us=1, u_tgt=u_tgt, mi=mi, int_multi=int_multi, pint_log_base=pint_log_base, pint_prob=pint_prob, ack_prio=0, link_down=args.down, failure=failure, kmax_map=kmax_map, kmin_map=kmin_map, pmax_map=pmax_map, buffer_size=bfsz, enable_tr=enable_tr)
 	else:
 		print "unknown cc:", args.cc
 		sys.exit(1)

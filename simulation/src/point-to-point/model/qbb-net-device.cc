@@ -295,8 +295,8 @@ namespace ns3 {
 			}
 			return;
 		}else{   //switch, doesn't care about qcn, just send
-			// p = m_queue->DequeueRR1(m_paused);//shishi		
-			p = m_queue->DequeueRR(m_paused);//this is round-robin
+			p = m_queue->DequeueRR1(m_paused);//shishi		
+			// p = m_queue->DequeueRR(m_paused);//this is round-robin
 			if (p != 0){
 				m_snifferTrace(p);
 				m_promiscSnifferTrace(p);
@@ -403,8 +403,8 @@ namespace ns3 {
 	bool QbbNetDevice::SwitchSend (uint32_t qIndex, Ptr<Packet> packet, CustomHeader &ch){
 		m_macTxTrace(packet);
 		m_traceEnqueue(packet, qIndex);
-		// m_queue->Enqueue1(packet, qIndex);//shishi
-		m_queue->Enqueue(packet, qIndex);
+		m_queue->Enqueue1(packet, qIndex);//shishi
+		// m_queue->Enqueue(packet, qIndex);
 		DequeueAndTransmit();
 		return true;
 	}
@@ -461,22 +461,22 @@ namespace ns3 {
 		if((ch.l3Prot == 0xFC || ch.l3Prot == 0xFD)  && pkt_size < 60)
 			pkt_size = 60;
 		Time txTime = Seconds (m_bps.CalculateTxTime (pkt_size));
-		if (m_node->GetNodeType() == 0) {
-			if(ch.l3Prot == 0x11)
-					printf("%lu,host,UDP,%08x,%08x,%u,%u\n",Simulator::Now().GetTimeStep(), ch.sip,ch.dip,p->GetSize(),ch.udp.seq);
-			else if((ch.l3Prot == 0xFC || ch.l3Prot == 0xFD))
-				printf("%lu,host,ACK,%08x,%08x,%u,%u\n",Simulator::Now().GetTimeStep(), ch.sip,ch.dip,p->GetSize(),ch.ack.seq);
-			else 
-				printf("%lu,host,,%08x,%08x,%u,%u\n",Simulator::Now().GetTimeStep(), ch.sip,ch.dip,p->GetSize(),ch.ack.seq);
-		}
-		else {
-			if(ch.l3Prot == 0x11)
-					printf("%lu,switch,UDP,%08x,%08x,%u,%u\n",Simulator::Now().GetTimeStep(), ch.sip,ch.dip,p->GetSize(),ch.udp.seq);
-			else if((ch.l3Prot == 0xFC || ch.l3Prot == 0xFD))
-				printf("%lu,siwtch,ACK,%08x,%08x,%u,%u\n",Simulator::Now().GetTimeStep(), ch.sip,ch.dip,p->GetSize(),ch.ack.seq);
-			else 
-				printf("%lu,switch,,%08x,%08x,%u,%u\n",Simulator::Now().GetTimeStep(), ch.sip,ch.dip,p->GetSize(),ch.ack.seq);
-		}
+		// if (m_node->GetNodeType() == 0) {
+		// 	if(ch.l3Prot == 0x11)
+		// 			printf("%lu,host,UDP,%08x,%08x,%u,%u\n",Simulator::Now().GetTimeStep(), ch.sip,ch.dip,p->GetSize(),ch.udp.seq);
+		// 	else if((ch.l3Prot == 0xFC || ch.l3Prot == 0xFD))
+		// 		printf("%lu,host,ACK,%08x,%08x,%u,%u\n",Simulator::Now().GetTimeStep(), ch.sip,ch.dip,p->GetSize(),ch.ack.seq);
+		// 	else 
+		// 		printf("%lu,host,,%08x,%08x,%u,%u\n",Simulator::Now().GetTimeStep(), ch.sip,ch.dip,p->GetSize(),ch.ack.seq);
+		// }
+		// else {
+		// 	if(ch.l3Prot == 0x11)
+		// 			printf("%lu,switch,UDP,%08x,%08x,%u,%u\n",Simulator::Now().GetTimeStep(), ch.sip,ch.dip,p->GetSize(),ch.udp.seq);
+		// 	else if((ch.l3Prot == 0xFC || ch.l3Prot == 0xFD))
+		// 		printf("%lu,siwtch,ACK,%08x,%08x,%u,%u\n",Simulator::Now().GetTimeStep(), ch.sip,ch.dip,p->GetSize(),ch.ack.seq);
+		// 	else 
+		// 		printf("%lu,switch,,%08x,%08x,%u,%u\n",Simulator::Now().GetTimeStep(), ch.sip,ch.dip,p->GetSize(),ch.ack.seq);
+		// }
 		
 		// Time txTime = Seconds(m_bps.CalculateTxTime(p->GetSize()));
 		Time txCompleteTime = txTime + m_tInterframeGap;
@@ -542,8 +542,8 @@ namespace ns3 {
 			for (uint32_t i = 0; i < qCnt; i++)
 				m_paused[i] = false;
 			while (1){
-				// Ptr<Packet> p = m_queue->DequeueRR1(m_paused);//shishi
-				Ptr<Packet> p = m_queue->DequeueRR(m_paused);
+				Ptr<Packet> p = m_queue->DequeueRR1(m_paused);//shishi
+				// Ptr<Packet> p = m_queue->DequeueRR(m_paused);
 				if (p == 0)
 					 break;
 				m_traceDrop(p, m_queue->GetLastQueue());

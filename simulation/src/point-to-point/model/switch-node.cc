@@ -239,11 +239,11 @@ bool SwitchNode::SwitchReceiveFromDevice(Ptr<NetDevice> device, Ptr<Packet> pack
 
 //shishi codes
 void SwitchNode::SwitchNotifyDequeue(uint32_t ifIndex, uint32_t qIndex, Ptr<Packet> p){
-	printf("switch id %d\n",m_ecmpSeed);
+	uint64_t now_time = Simulator::Now().GetTimeStep();
 	if(m_ccMode == 2) {
 		FlowIdTag t;
 		p->PeekPacketTag(t);
-		cnt++;
+		// cnt++;
 		//get sip dip
 		CustomHeader ch(CustomHeader::L2_Header | CustomHeader::L3_Header | CustomHeader::L4_Header);
 		ch.getInt = 1; // parse INT header
@@ -256,13 +256,14 @@ void SwitchNode::SwitchNotifyDequeue(uint32_t ifIndex, uint32_t qIndex, Ptr<Pack
 		uint64_t edge = ((uint64_t)sip << 32) | dip;
 		//cm->Update(edge,p_size);
 		if(m_heap.find(edge) != m_heap.end()) {
-			m_heap[edge] += p_size;
+			m_heap[edge].first += p_size;
+			m_heap[edge].second = now_time;
 		}
 		else {
-			m_heap[edge] = p_size;
+			m_heap[edge].first = p_size;
+			m_heap[edge].second = now_time;
 		}
-		uint64_t judgeFlow = m_heap[edge];
-		//printf("%d %d %d %d\n",sip,dip,p_size,judgeFlow);
+		uint64_t judgeFlow = m_heap[edge].first;
 
 		
 		if (qIndex != 0){
@@ -272,7 +273,8 @@ void SwitchNode::SwitchNotifyDequeue(uint32_t ifIndex, uint32_t qIndex, Ptr<Pack
 			m_mmu->RemoveFromIngressAdmission(inDev, qIndex, p_size);
 			m_mmu->RemoveFromEgressAdmission(ifIndex, qIndex, p_size);
 			m_bytes[inDev][ifIndex][qIndex] -= p_size;
-			if (judgeFlow > UINT64_MAX){
+			if (judgeFlow > 1000000){
+				ch.udp.ih.nhop = 0;
 				PppHeader ppp;
 				Ipv4Header h;
 				bool egressCongested = m_mmu->ShouldSendCN(ifIndex, qIndex);
@@ -290,7 +292,7 @@ void SwitchNode::SwitchNotifyDequeue(uint32_t ifIndex, uint32_t qIndex, Ptr<Pack
 			//CheckAndSendPfc(inDev, qIndex);
 			CheckAndSendResume(inDev, qIndex);
 		}
-		if (judgeFlow <= UINT64_MAX){
+		if (judgeFlow <= 1000000){
 			uint8_t* buf = p->GetBuffer();
 			if (buf[PppHeader::GetStaticSize() + 9] == 0x11){ // udp packet
 				IntHeader *ih = (IntHeader*)&buf[PppHeader::GetStaticSize() + 20 + 8 + 6]; // ppp, ip, udp, SeqTs, INT
@@ -298,16 +300,22 @@ void SwitchNode::SwitchNotifyDequeue(uint32_t ifIndex, uint32_t qIndex, Ptr<Pack
 				//printf("in switch %d, flow_size:%lu\n",h.GetCC(),judgeFlow);
 				ih->PushHop(Simulator::Now().GetTimeStep(), m_txBytes[ifIndex], dev->GetQueue()->GetNBytesTotal(), dev->GetDataRate().GetBitRate());
 				p_size += 8;
-				printf("%lu,%08x,%08x,switchID=%u,ifIndex=%u,%lu,%u,%u,%.3lf\n",Simulator::Now().GetTimeStep(),ch.sip,ch.dip,m_ecmpSeed,ifIndex,m_txBytes[ifIndex],p_size,dev->GetQueue()->GetNBytesTotal(),dev->GetDataRate().GetBitRate() * 1e-9);
+				// printf("%lu,%08x,%08x,switchID=%u,ifIndex=%u,%lu,%u,%u,%.3lf\n",Simulator::Now().GetTimeStep(),ch.sip,ch.dip,m_ecmpSeed,ifIndex,m_txBytes[ifIndex],p_size,dev->GetQueue()->GetNBytesTotal(),dev->GetDataRate().GetBitRate() * 1e-9);
 			}
+			m_txBytes[ifIndex] += p_size;//p->getsize
 		}
-		if(cnt>100000) {
-			cnt = 0;
-			m_heap.clear();
+		auto it = m_heap.begin();
+		while( (!m_heap.empty()) && (it != m_heap.end())) {
+			if((now_time - m_heap[it->first].second) > 10000) {
+				it = m_heap.erase(it);
+			}
+			else 
+				++it;
 		}
-		m_txBytes[ifIndex] += p->GetSize();//p->getsize
-		m_lastPktSize[ifIndex] = p->GetSize();//p->getsize
-		m_lastPktTs[ifIndex] = Simulator::Now().GetTimeStep();
+		// if(cnt>100000) {
+		// 	cnt = 0;
+		// 	m_heap.clear();
+		// }
 	}
 	else {
 		FlowIdTag t;

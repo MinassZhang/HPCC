@@ -848,8 +848,8 @@ void RdmaHw::UpdateRateHp(Ptr<RdmaQueuePair> qp, Ptr<Packet> p, CustomHeader &ch
 			printf("\n");
 		}
 		#endif
-		for (uint32_t i = 0; i < ih.nhop; i++)//shishi
-				printf("%lu %08x,%08x firstRTT hop %d %u %lu %lu\n",Simulator::Now().GetTimeStep(),ch.sip,ch.dip,i, ih.hop[i].GetQlen(), ih.hop[i].GetBytes(), ih.hop[i].GetTime());
+		// for (uint32_t i = 0; i < ih.nhop; i++)//shishi
+		// 		printf("%lu %08x,%08x firstRTT hop %d %u %lu %lu\n",Simulator::Now().GetTimeStep(),ch.sip,ch.dip,i, ih.hop[i].GetQlen(), ih.hop[i].GetBytes(), ih.hop[i].GetTime());
 	}else {
 		// check packet INT
 		IntHeader &ih = ch.ack.ih;
@@ -872,7 +872,7 @@ void RdmaHw::UpdateRateHp(Ptr<RdmaQueuePair> qp, Ptr<Packet> p, CustomHeader &ch
 				}
 				updated[i] = updated_any = true;
 				//shishi
-				printf("%lu %08x,%08x hop %d %u(%u) %lu(%lu) %lu(%lu)\n",Simulator::Now().GetTimeStep(),ch.sip,ch.dip,i, ih.hop[i].GetQlen(), qp->hp.hop[i].GetQlen(), ih.hop[i].GetBytes(), qp->hp.hop[i].GetBytes(), ih.hop[i].GetTime(), qp->hp.hop[i].GetTime());
+				// printf("%lu %08x,%08x hop %d %u(%u) %lu(%lu) %lu(%lu)\n",Simulator::Now().GetTimeStep(),ch.sip,ch.dip,i, ih.hop[i].GetQlen(), qp->hp.hop[i].GetQlen(), ih.hop[i].GetBytes(), qp->hp.hop[i].GetBytes(), ih.hop[i].GetTime(), qp->hp.hop[i].GetTime());
 				#if PRINT_LOG
 				if (print)
 					printf(" %u(%u) %lu(%lu) %lu(%lu)", ih.hop[i].GetQlen(), qp->hp.hop[i].GetQlen(), ih.hop[i].GetBytes(), qp->hp.hop[i].GetBytes(), ih.hop[i].GetTime(), qp->hp.hop[i].GetTime());
@@ -881,7 +881,7 @@ void RdmaHw::UpdateRateHp(Ptr<RdmaQueuePair> qp, Ptr<Packet> p, CustomHeader &ch
 				double duration = tau * 1e-9;
 				double txRate = (ih.hop[i].GetBytesDelta(qp->hp.hop[i])) * 8 / duration;
 				double u = txRate / ih.hop[i].GetLineRate() + (double)std::min(ih.hop[i].GetQlen(), qp->hp.hop[i].GetQlen()) * qp->m_max_rate.GetBitRate() / ih.hop[i].GetLineRate() /qp->m_win;
-				printf("%08x,%08x txRate: %.3lf, u: %.3lf\n",ch.sip,ch.dip, txRate, u);//shishi
+				// printf("%08x,%08x txRate: %.3lf, u: %.3lf\n",ch.sip,ch.dip, txRate, u);//shishi
 				#if PRINT_LOG
 				if (print)
 					printf(" %.3lf %.3lf", txRate, u);
@@ -933,8 +933,8 @@ void RdmaHw::UpdateRateHp(Ptr<RdmaQueuePair> qp, Ptr<Packet> p, CustomHeader &ch
 						printf(" rate:%.3lf->%.3lf\n", qp->hp.m_curRate.GetBitRate()*1e-9, new_rate.GetBitRate()*1e-9);
 					#endif
 					//shishi
-					printf("%08x,%08x u=%.6lf U=%.3lf dt=%u max_c=%.3lf\n",ch.sip,ch.dip, qp->hp.u, U, dt, max_c);
-					printf("%lu,%08x,%08x,rate,%.3lf,%.3lf\n",Simulator::Now().GetTimeStep(),ch.sip,ch.dip, qp->hp.m_curRate.GetBitRate()*1e-9, new_rate.GetBitRate()*1e-9);
+					// printf("%08x,%08x u=%.6lf U=%.3lf dt=%u max_c=%.3lf\n",ch.sip,ch.dip, qp->hp.u, U, dt, max_c);
+					// printf("%lu,%08x,%08x,rate,%.3lf,%.3lf\n",Simulator::Now().GetTimeStep(),ch.sip,ch.dip, qp->hp.m_curRate.GetBitRate()*1e-9, new_rate.GetBitRate()*1e-9);
 				}
 			}else{
 				// for per hop (per hop R)
