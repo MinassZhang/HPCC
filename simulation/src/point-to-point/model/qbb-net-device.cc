@@ -46,6 +46,7 @@
 #include "ns3/seq-ts-header.h"
 #include "ns3/pointer.h"
 #include "ns3/custom-header.h"
+#include "ns3/BFCHeader.h"
 
 #include <iostream>
 
@@ -104,8 +105,10 @@ namespace ns3 {
 			uint32_t idx = (qIndex + m_rrlast) % fcount;
 			Ptr<RdmaQueuePair> qp = m_qpGrp->Get(idx);
 			if (!paused[qp->m_pg] && qp->GetBytesLeft() > 0 && !qp->IsWinBound()){
-				if (m_qpGrp->Get(idx)->m_nextAvail.GetTimeStep() > Simulator::Now().GetTimeStep()) //not available now
+				if (m_qpGrp->Get(idx)->m_nextAvail.GetTimeStep() > Simulator::Now().GetTimeStep()) //not available now 
+				{
 					continue;
+				}
 				res = idx;
 				break;
 			}else if (qp->IsFinished()){
@@ -267,6 +270,9 @@ namespace ns3 {
 				if (qIndex == -1){ // high prio
 					p = m_rdmaEQ->DequeueQindex(qIndex);
 					m_traceDequeue(p, 0);
+					// uint8_t* buf = p->GetBuffer();
+					// BFCHeader *bfc = (BFCHeader*)&buf[PppHeader::GetStaticSize() + 20 + 8 + 6];
+					// bfc->upstreamQueue = 3;
 					TransmitStart(p);
 					return;
 				}
@@ -274,6 +280,15 @@ namespace ns3 {
 				Ptr<RdmaQueuePair> lastQp = m_rdmaEQ->GetQp(qIndex);
 				p = m_rdmaEQ->DequeueQindex(qIndex);
 
+				// uint8_t* buf = p->GetBuffer();
+				// BFCHeader *bfc = (BFCHeader*)&buf[PppHeader::GetStaticSize() + 20 + 8 + 6];
+				// bfc->upstreamQueue = qIndex;
+
+				CustomHeader ch(CustomHeader::L2_Header | CustomHeader::L3_Header | CustomHeader::L4_Header);
+				ch.getInt = 0;
+				p->PeekHeader(ch);
+				printf("%lu,trans,host,%u,%08x,%08x,%u,%u\n",Simulator::Now().GetTimeStep(),m_node->GetId(),ch.sip,ch.dip,qIndex,ch.udp.seq);
+				
 				// transmit
 				m_traceQpDequeue(p, lastQp);
 				TransmitStart(p);
@@ -295,8 +310,8 @@ namespace ns3 {
 			}
 			return;
 		}else{   //switch, doesn't care about qcn, just send
-			p = m_queue->DequeueRR1(m_paused);//shishi		
-			// p = m_queue->DequeueRR(m_paused);//this is round-robin
+			// p = m_queue->DequeueRR1(m_paused);//shishi		
+			p = m_queue->DequeueRR(m_paused);//this is round-robin
 			if (p != 0){
 				m_snifferTrace(p);
 				m_promiscSnifferTrace(p);
@@ -314,6 +329,11 @@ namespace ns3 {
 					m_node->SwitchNotifyDequeue(m_ifIndex, qIndex, p);
 					p->RemovePacketTag(t);
 				}
+
+				CustomHeader ch(CustomHeader::L2_Header | CustomHeader::L3_Header | CustomHeader::L4_Header);
+				ch.getInt = 0;
+				p->PeekHeader(ch);
+				printf("%lu,trans,switch,%u,%08x,%08x,%u,%u\n",Simulator::Now().GetTimeStep(),m_node->GetId(),ch.sip,ch.dip,qIndex,ch.udp.seq);
 
 				m_traceDequeue(p, qIndex);
 				TransmitStart(p);
@@ -376,17 +396,21 @@ namespace ns3 {
 			unsigned qIndex = ch.pfc.qIndex;
 			if (ch.pfc.time > 0){
 				m_tracePfc(1);
+				printf("%lu,node,%u,%u,getPFC,%u\n",Simulator::Now().GetTimeStep(),m_node->GetId(),m_node->GetNodeType(),qIndex);
 				m_paused[qIndex] = true;
 			}else{
 				m_tracePfc(0);
+				printf("%lu,node,%u,%u,getResume,%u\n",Simulator::Now().GetTimeStep(),this->m_node->GetId(),m_node->GetNodeType(),qIndex);
 				Resume(qIndex);
 			}
 		}else { // non-PFC packets (data, ACK, NACK, CNP...)
 			if (m_node->GetNodeType() > 0){ // switch
+				// printf("%lu,recei,switch,%u,%08x,%08x,%u\n",Simulator::Now().GetTimeStep(),m_node->GetId(),ch.sip,ch.dip,ch.udp.seq);
 				packet->AddPacketTag(FlowIdTag(m_ifIndex));
 				m_node->SwitchReceiveFromDevice(this, packet, ch);
 			}else { // NIC
 				// send to RdmaHw
+				// printf("%lu,recei,host,%u,%08x,%08x,%u\n",Simulator::Now().GetTimeStep(),m_node->GetId(),ch.sip,ch.dip,ch.udp.seq);
 				int ret = m_rdmaReceiveCb(packet, ch);
 				// TODO we may based on the ret do something
 			}
@@ -403,8 +427,8 @@ namespace ns3 {
 	bool QbbNetDevice::SwitchSend (uint32_t qIndex, Ptr<Packet> packet, CustomHeader &ch){
 		m_macTxTrace(packet);
 		m_traceEnqueue(packet, qIndex);
-		m_queue->Enqueue1(packet, qIndex);//shishi
-		// m_queue->Enqueue(packet, qIndex);
+		// m_queue->Enqueue1(packet, qIndex);//shishi
+		m_queue->Enqueue(packet, qIndex);
 		DequeueAndTransmit();
 		return true;
 	}
@@ -417,6 +441,24 @@ namespace ns3 {
 		ipv4h.SetProtocol(0xFE);
 		ipv4h.SetSource(m_node->GetObject<Ipv4>()->GetAddress(m_ifIndex, 0).GetLocal());
 		ipv4h.SetDestination(Ipv4Address("255.255.255.255"));
+		ipv4h.SetPayloadSize(p->GetSize());
+		ipv4h.SetTtl(1);
+		ipv4h.SetIdentification(UniformVariable(0, 65536).GetValue());
+		p->AddHeader(ipv4h);
+		AddHeader(p, 0x800);
+		CustomHeader ch(CustomHeader::L2_Header | CustomHeader::L3_Header | CustomHeader::L4_Header);
+		p->PeekHeader(ch);
+		SwitchSend(0, p, ch);
+	}
+
+	void QbbNetDevice::SendPfc_BFC(uint32_t qIndex, uint32_t type, uint32_t dip){
+		Ptr<Packet> p = Create<Packet>(0);
+		PauseHeader pauseh((type == 0 ? m_pausetime : 0), m_queue->GetNBytes(qIndex), qIndex);
+		p->AddHeader(pauseh);
+		Ipv4Header ipv4h;  // Prepare IPv4 header
+		ipv4h.SetProtocol(0xFE);
+		ipv4h.SetSource(m_node->GetObject<Ipv4>()->GetAddress(m_ifIndex, 0).GetLocal());
+		ipv4h.SetDestination(Ipv4Address(dip));
 		ipv4h.SetPayloadSize(p->GetSize());
 		ipv4h.SetTtl(1);
 		ipv4h.SetIdentification(UniformVariable(0, 65536).GetValue());
@@ -453,32 +495,16 @@ namespace ns3 {
 		m_phyTxBeginTrace(m_currentPkt);
 
 		//shishi
-		uint32_t pkt_size = p->GetSize();
-		CustomHeader ch(CustomHeader::L2_Header | CustomHeader::L3_Header | CustomHeader::L4_Header);
-		ch.getInt = 1; // parse INT header
-		p->PeekHeader(ch);
-		pkt_size -= ((ch.ack.ih.maxHop-ch.ack.ih.nhop)*8);
-		if((ch.l3Prot == 0xFC || ch.l3Prot == 0xFD)  && pkt_size < 60)
-			pkt_size = 60;
-		Time txTime = Seconds (m_bps.CalculateTxTime (pkt_size));
-		// if (m_node->GetNodeType() == 0) {
-		// 	if(ch.l3Prot == 0x11)
-		// 			printf("%lu,host,UDP,%08x,%08x,%u,%u\n",Simulator::Now().GetTimeStep(), ch.sip,ch.dip,p->GetSize(),ch.udp.seq);
-		// 	else if((ch.l3Prot == 0xFC || ch.l3Prot == 0xFD))
-		// 		printf("%lu,host,ACK,%08x,%08x,%u,%u\n",Simulator::Now().GetTimeStep(), ch.sip,ch.dip,p->GetSize(),ch.ack.seq);
-		// 	else 
-		// 		printf("%lu,host,,%08x,%08x,%u,%u\n",Simulator::Now().GetTimeStep(), ch.sip,ch.dip,p->GetSize(),ch.ack.seq);
-		// }
-		// else {
-		// 	if(ch.l3Prot == 0x11)
-		// 			printf("%lu,switch,UDP,%08x,%08x,%u,%u\n",Simulator::Now().GetTimeStep(), ch.sip,ch.dip,p->GetSize(),ch.udp.seq);
-		// 	else if((ch.l3Prot == 0xFC || ch.l3Prot == 0xFD))
-		// 		printf("%lu,siwtch,ACK,%08x,%08x,%u,%u\n",Simulator::Now().GetTimeStep(), ch.sip,ch.dip,p->GetSize(),ch.ack.seq);
-		// 	else 
-		// 		printf("%lu,switch,,%08x,%08x,%u,%u\n",Simulator::Now().GetTimeStep(), ch.sip,ch.dip,p->GetSize(),ch.ack.seq);
-		// }
-		
-		// Time txTime = Seconds(m_bps.CalculateTxTime(p->GetSize()));
+		// uint32_t pkt_size = p->GetSize();
+		// CustomHeader ch(CustomHeader::L2_Header | CustomHeader::L3_Header | CustomHeader::L4_Header);
+		// ch.getInt = 1; // parse INT header
+		// p->PeekHeader(ch);
+		// pkt_size -= ((ch.ack.ih.maxHop-ch.ack.ih.nhop)*8);
+		// if((ch.l3Prot == 0xFC || ch.l3Prot == 0xFD)  && pkt_size < 60)
+		// 	pkt_size = 60;
+		// Time txTime = Seconds (m_bps.CalculateTxTime (pkt_size));
+
+		Time txTime = Seconds(m_bps.CalculateTxTime(p->GetSize()));
 		Time txCompleteTime = txTime + m_tInterframeGap;
 		NS_LOG_LOGIC("Schedule TransmitCompleteEvent in " << txCompleteTime.GetSeconds() << "sec");
 		Simulator::Schedule(txCompleteTime, &QbbNetDevice::TransmitComplete, this);
@@ -542,8 +568,8 @@ namespace ns3 {
 			for (uint32_t i = 0; i < qCnt; i++)
 				m_paused[i] = false;
 			while (1){
-				Ptr<Packet> p = m_queue->DequeueRR1(m_paused);//shishi
-				// Ptr<Packet> p = m_queue->DequeueRR(m_paused);
+				// Ptr<Packet> p = m_queue->DequeueRR1(m_paused);//shishi
+				Ptr<Packet> p = m_queue->DequeueRR(m_paused);
 				if (p == 0)
 					 break;
 				m_traceDrop(p, m_queue->GetLastQueue());
@@ -559,5 +585,10 @@ namespace ns3 {
 			Time delta = t < Simulator::Now() ? Time(0) : t - Simulator::Now();
 			m_nextSend = Simulator::Schedule(delta, &QbbNetDevice::DequeueAndTransmit, this);
 		}
+	}
+
+	//shishi
+	bool QbbNetDevice::GetPause(uint32_t qIndex){
+		return m_paused[qIndex];
 	}
 } // namespace ns3

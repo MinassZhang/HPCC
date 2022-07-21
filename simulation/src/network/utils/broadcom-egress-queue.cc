@@ -102,6 +102,10 @@ namespace ns3 {
 			m_queues[qIndex]->Enqueue(p);
 			m_bytesInQueueTotal += pkt_size;
 			m_bytesInQueue[qIndex] += pkt_size;
+			// if(qIndex == 3) {
+			// 	uint64_t key = (uint64_t)ch.sip << 32 | ch.dip;
+			// 	++pcount[key];
+			// }
 		}
 		else
 		{
@@ -188,6 +192,8 @@ namespace ns3 {
 				{
 					if (!paused[(qIndex + m_rrlast) % qCnt] && m_queues[(qIndex + m_rrlast) % qCnt]->GetNPackets() > 0)  //round robin
 					{
+						// if(qIndex == 4 && m_queues[3]->GetNPackets() > 0)
+						// 	qIndex = 3;
 						found = true;
 						break;
 					}
@@ -197,11 +203,24 @@ namespace ns3 {
 		}
 		if (found)
 		{
+			// Ptr<const Packet> p1 = m_queues[qIndex]->Peek();
+			// CustomHeader ch1(CustomHeader::L2_Header | CustomHeader::L3_Header | CustomHeader::L4_Header);
+			// ch1.getInt = 1;
+			// p1->PeekHeader(ch1);
+			// uint64_t key = (uint64_t)ch1.sip<<32 | ch1.dip;
+			// if(pcount[key]!=0 && qIndex==4) {
+			// 	qIndex = 3;
+			// }
+
 			Ptr<Packet> p = m_queues[qIndex]->Dequeue();
 			m_traceBeqDequeue(p, qIndex);
 			CustomHeader ch(CustomHeader::L2_Header | CustomHeader::L3_Header | CustomHeader::L4_Header);
 			ch.getInt = 1;
 			p->PeekHeader(ch);
+			// if(qIndex == 3) {
+			// 	uint64_t key = (uint64_t)ch.sip<<32 | ch.dip;
+			// 	--pcount[key];
+			// }
 			uint32_t pkt_size = p->GetSize() - ((ch.ack.ih.maxHop-ch.ack.ih.nhop)*8);
 			if((ch.l3Prot == 0xFC || ch.l3Prot == 0xFD)  && pkt_size < 60 )
 				pkt_size = 60;

@@ -32,6 +32,7 @@ def build(bld):
     headers = bld(features='ns3header')
     headers.module = 'point-to-point'
     headers.source = [
+        'model/murmurhash.h',
         'model/point-to-point-net-device.h',
         'model/point-to-point-channel.h',
         'model/point-to-point-remote-channel.h',

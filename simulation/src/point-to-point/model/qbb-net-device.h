@@ -127,6 +127,10 @@ public:
 
 	void SendPfc(uint32_t qIndex, uint32_t type); // type: 0 = pause, 1 = resume
 
+  //shishi
+  bool GetPause(uint32_t qIndex);
+  void SendPfc_BFC(uint32_t qIndex, uint32_t type, uint32_t dip);
+
 	TracedCallback<Ptr<const Packet>, uint32_t> m_traceEnqueue;
 	TracedCallback<Ptr<const Packet>, uint32_t> m_traceDequeue;
 	TracedCallback<Ptr<const Packet>, uint32_t> m_traceDrop;

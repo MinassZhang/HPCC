@@ -25,6 +25,7 @@
 #include "drop-tail-queue.h"
 #include "ns3/point-to-point-net-device.h"
 #include "ns3/event-id.h"
+#include <unordered_map>
 
 namespace ns3 {
 
@@ -64,6 +65,9 @@ namespace ns3 {
 		uint32_t m_rrlast;
 		uint32_t m_qlast;
 		std::vector<Ptr<Queue> > m_queues; // uc queues
+
+		//shishi
+		std::unordered_map<uint64_t,uint32_t> pcount;
 	};
 
 } // namespace ns3

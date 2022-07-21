@@ -11,6 +11,9 @@
 #include "ppp-header.h"
 #include "ns3/int-header.h"
 #include <cmath>
+#include "murmurhash.h"
+#include "ns3/BFCHeader.h"
+#include <random>
 
 namespace ns3 {
 
@@ -57,6 +60,13 @@ SwitchNode::SwitchNode(){
 		m_lastPktSize[i] = m_lastPktTs[i] = 0;
 	for (uint32_t i = 0; i < pCnt; i++)
 		m_u[i] = 0;
+	for (uint32_t i = 0; i < pCnt; i++) 
+		for (uint32_t j = 0; j < qCnt; j++)
+			m_txBytes1[i][j] = 0;
+	std::string s = std::to_string(m_ecmpSeed);
+	char const *name= s.c_str();
+    unsigned long seed = AwareHash((unsigned char*)name, strlen(name), 13091204281, 228204732751, 6620830889);
+    hash_seed = GenHashSeed(seed);
 }
 
 int SwitchNode::GetOutDev(Ptr<const Packet> p, CustomHeader &ch){
@@ -109,12 +119,41 @@ void SwitchNode::SendToDev(Ptr<Packet>p, CustomHeader &ch){
 	if (idx >= 0){
 		NS_ASSERT_MSG(m_devices[idx]->IsLinkUp(), "The routing table look up should return link that is up");
 
+		//get sip dip
+		uint64_t now_time = Simulator::Now().GetTimeStep();
+		uint32_t p_size = p->GetSize()- (ch.udp.ih.maxHop-ch.udp.ih.nhop) * 8;
+		if((ch.l3Prot == 0xFC || ch.l3Prot == 0xFD)  && p_size < 60)
+			p_size = 60;
+		uint32_t sip = ch.sip;
+		uint32_t dip = ch.dip;
+		uint64_t edge = ((uint64_t)sip << 32) | dip;
+		//cm->Update(edge,p_size);
+		if(m_heap.find(edge) != m_heap.end()) {
+			m_heap[edge].first += p_size;
+			m_heap[edge].second = now_time;
+		}
+		else {
+			m_heap[edge].first = p_size;
+			m_heap[edge].second = now_time;
+		}
+		uint64_t judgeFlow = m_heap[edge].first;
+
 		// determine the qIndex
 		uint32_t qIndex;
 		if (ch.l3Prot == 0xFF || ch.l3Prot == 0xFE || (m_ackHighPrio && (ch.l3Prot == 0xFD || ch.l3Prot == 0xFC))){  //QCN or PFC or NACK, go highest priority
 			qIndex = 0;
 		}else{
-			qIndex = (ch.l3Prot == 0x06 ? 1 : ch.udp.pg); // if TCP, put to queue 1
+			
+			if(judgeFlow > 1000000) {
+				if(m_flowTable[edge].first == 0)
+					qIndex = 4;
+				else
+					qIndex = (ch.l3Prot == 0x06 ? 1 : ch.udp.pg);
+			}
+			else {
+				qIndex = (ch.l3Prot == 0x06 ? 1 : ch.udp.pg); // if TCP, put to queue 1
+				++m_flowTable[edge].first;
+			}
 		}
 
 		// admission control
@@ -122,20 +161,115 @@ void SwitchNode::SendToDev(Ptr<Packet>p, CustomHeader &ch){
 		p->PeekPacketTag(t);
 		uint32_t inDev = t.GetFlowId();
 
-		//shishi
-		uint32_t pkt_size = p->GetSize() - (ch.udp.ih.maxHop-ch.udp.ih.nhop) * 8;
-		// uint32_t pkt_size = p->GetSize();
-		if((ch.l3Prot == 0xFC || ch.l3Prot == 0xFD)  && pkt_size < 60)
-			pkt_size = 60;
 		if (qIndex != 0){ //not highest priority
-			if (m_mmu->CheckIngressAdmission(inDev, qIndex, pkt_size) && m_mmu->CheckEgressAdmission(idx, qIndex, pkt_size)){			// Admission control
-				m_mmu->UpdateIngressAdmission(inDev, qIndex, pkt_size);
-				m_mmu->UpdateEgressAdmission(idx, qIndex, pkt_size);
+			if (m_mmu->CheckIngressAdmission(inDev, qIndex, p_size) && m_mmu->CheckEgressAdmission(idx, qIndex, p_size)){			// Admission control
+				m_mmu->UpdateIngressAdmission(inDev, qIndex, p_size);
+				m_mmu->UpdateEgressAdmission(idx, qIndex, p_size);
 			}else{
 				return; // Drop
 			}
 			CheckAndSendPfc(inDev, qIndex);
 		}
+
+		auto it = m_heap.begin();
+		while( (!m_heap.empty()) && (it != m_heap.end())) {
+			if((now_time - m_heap[it->first].second) > 10000) {
+				it = m_heap.erase(it);
+			}
+			else 
+				++it;
+		}
+
+		m_bytes[inDev][idx][qIndex] += (p_size);
+		m_devices[idx]->SwitchSend(qIndex, p, ch);
+	}else
+		return; // Drop
+}
+
+uint32_t SwitchNode::AssignQueue(uint32_t port) {
+	Ptr<QbbNetDevice> dev = DynamicCast<QbbNetDevice>(m_devices[port]);
+	for(uint32_t queue=1;queue<qCnt;queue++) {
+		// printf("node,%d,queuerr,%u,%u,%u,%u,%u\n",node_id,queue,q_last,(queue + q_last) % qCnt,egress_bytes[port][(queue + q_last) % qCnt],paused[port][(queue + q_last) % qCnt]);
+		uint32_t qindex = (queue + q_last) % qCnt;
+		if(m_mmu->egress_bytes[port][qindex] == 0 && qindex != 0 && !dev->GetPause(qindex)) {
+			q_last = qindex;
+			return qindex;
+		}
+	}
+	std::random_device rd;
+	std::default_random_engine e(rd());
+	std::uniform_int_distribution<unsigned> u(1,qCnt-1);
+	return u(e);
+}
+
+void SwitchNode::SendToDev_BFC(Ptr<Packet>p, CustomHeader &ch){
+	// printf("switch: %08x %08x: %u\n",ch.sip,ch.dip,p->GetSize());
+	int idx = GetOutDev(p, ch);//Egress Port
+	if (idx >= 0){
+		NS_ASSERT_MSG(m_devices[idx]->IsLinkUp(), "The routing table look up should return link that is up");
+
+		// admission control
+		FlowIdTag t;
+		p->PeekPacketTag(t);
+		uint32_t inDev = t.GetFlowId();//Ingress Port
+
+		// determine the qIndex
+		uint32_t qIndex;
+		uint32_t fid = ch.sip | ch.dip | ch.l3Prot;
+		uint32_t hash_fid = MurmurHash2((unsigned char*)(&fid),4,hash_seed);
+		uint64_t ekey = (uint64_t)hash_fid | (((uint64_t)idx) << 32);
+
+		uint8_t* buf = p->GetBuffer();
+		BFCHeader *bfc = (BFCHeader*)&buf[PppHeader::GetStaticSize() + 20 + 8 + 6];
+		uint64_t inkey =  (uint64_t)bfc->upstreamQueue | (((uint64_t)inDev) << 32);
+
+		bool reassignQueue = false;
+		if (ch.l3Prot == 0xFF || ch.l3Prot == 0xFE || (m_ackHighPrio && (ch.l3Prot == 0xFD || ch.l3Prot == 0xFC))){  //QCN or PFC or NACK, go highest priority
+			qIndex = 0;
+		}else{
+			if(m_flowTable[ekey].first == 0) {
+				reassignQueue = true;
+			}
+			++m_flowTable[ekey].first;//size
+			if(reassignQueue) {
+				m_flowTable[ekey].second = AssignQueue(idx);//queue seq
+			}
+			qIndex = m_flowTable[ekey].second;
+		}
+
+		uint32_t pkt_size = p->GetSize();
+		if (qIndex != 0){ //not highest priority
+			if (m_mmu->CheckIngressAdmission(inDev, qIndex, pkt_size) && m_mmu->CheckEgressAdmission(idx, qIndex, pkt_size)){			// Admission control
+				m_mmu->UpdateIngressAdmission(inDev, qIndex, pkt_size);
+				m_mmu->UpdateEgressAdmission(idx, qIndex, pkt_size);
+				printf("%lu,node_revei,%u,%08x,%08x,%u,%u\n",Simulator::Now().GetTimeStep(),m_id,ch.sip,ch.dip,qIndex,ch.udp.seq);
+				Ptr<QbbNetDevice> dev = DynamicCast<QbbNetDevice>(m_devices[idx]);
+				Ptr<QbbNetDevice> device = DynamicCast<QbbNetDevice>(m_devices[inDev]);
+				uint32_t thre = 2*dev->GetDataRate().GetBitRate() * 1e-6;
+				uint32_t Nactive = 0;
+				for(int i=0;i<qCnt;i++) {
+					if(m_mmu->egress_bytes[idx][i] > 0 && !dev->GetPause(i)){
+						++Nactive;
+					}
+					// printf("%lu,node,%u,%08x,%08x,qindex,%u,bytes,%u,pause,%u,Nactive,%u\n",Simulator::Now().GetTimeStep(),m_id,ch.sip,ch.dip,i,m_mmu->egress_bytes[idx][i],dev->GetPause(i),Nactive);
+				}
+				// printf("final,%lu,node,%u,%08x,%08x,Nactive,%u\n",Simulator::Now().GetTimeStep(),m_id,ch.sip,ch.dip,Nactive);
+				if(m_mmu->egress_bytes[idx][qIndex] * Nactive> thre) {
+					printf("%lu,node,%u,%08x,%08x,thre,%u,%u,%u\n",Simulator::Now().GetTimeStep(),m_id,ch.sip,ch.dip,thre,Nactive,m_mmu->egress_bytes[idx][qIndex]);
+					bfc->counterIncr=1;
+					++m_pauseCount[inkey];
+					if(m_pauseCount[inkey] == 1) {
+						printf("%lu,node,%u,%08x,%08x,sendPFC,%u,%u,%u,%u,%u\n",Simulator::Now().GetTimeStep(),m_id,ch.sip,ch.dip,m_mmu->egress_bytes[idx][qIndex],Nactive,thre,bfc->upstreamQueue,qIndex);
+						device->SendPfc(bfc->upstreamQueue, 0);
+						m_mmu->SetPause(inDev, qIndex);
+					}
+				}
+			}else{
+				return; // Drop
+			}
+			// CheckAndSendPfc(inDev, qIndex);
+		}
+		// bfc->upstreamQueue = qIndex;
 		m_bytes[inDev][idx][qIndex] += (pkt_size);
 		m_devices[idx]->SwitchSend(qIndex, p, ch);
 	}else
@@ -154,10 +288,6 @@ void SwitchNode::SendToDev1(Ptr<Packet>p, CustomHeader &ch){
 			qIndex = 0;
 		}else{
 			qIndex = (ch.l3Prot == 0x06 ? 1 : ch.udp.pg); // if TCP, put to queue 1
-
-			//shishi
-			// if(ch.udp.ih.nhop > ch.udp.ih.maxHop)
-			// 	qIndex = 4;
 		}
 
 		// admission control
@@ -233,39 +363,62 @@ void SwitchNode::ClearTable(){
 
 // This function can only be called in switch mode
 bool SwitchNode::SwitchReceiveFromDevice(Ptr<NetDevice> device, Ptr<Packet> packet, CustomHeader &ch){
-	SendToDev(packet, ch);
+	SendToDev_BFC(packet, ch);//SHISHI
 	return true;
+}
+
+void SwitchNode::SwitchNotifyDequeue_BFC(uint32_t ifIndex, uint32_t qIndex, Ptr<Packet> p){
+	CustomHeader ch(CustomHeader::L2_Header | CustomHeader::L3_Header | CustomHeader::L4_Header);
+	ch.getInt = 0; // parse INT header
+	p->PeekHeader(ch);
+	uint32_t fid = ch.sip | ch.dip | ch.l3Prot;
+	uint32_t hash_fid = MurmurHash2((unsigned char*)(&fid),4,hash_seed);
+	uint64_t ekey = (uint64_t)hash_fid | (((uint64_t)ifIndex) << 32);
+	--m_flowTable[ekey].first;
+
+	FlowIdTag t;
+	p->PeekPacketTag(t);
+	uint32_t inDev = t.GetFlowId();
+	uint8_t* buf = p->GetBuffer();
+	BFCHeader *bfc = (BFCHeader*)&buf[PppHeader::GetStaticSize() + 20 + 8 + 6];
+	uint64_t inkey =  (uint64_t)bfc->upstreamQueue | (((uint64_t)inDev) << 32);
+
+	if (qIndex != 0){
+		m_mmu->RemoveFromIngressAdmission(inDev, qIndex, p->GetSize());
+		m_mmu->RemoveFromEgressAdmission(ifIndex, qIndex,  p->GetSize());
+		m_bytes[inDev][ifIndex][qIndex] -=  p->GetSize();
+	}
+	uint32_t last_upq = bfc->upstreamQueue;
+	bfc->upstreamQueue = qIndex;
+	if(bfc->counterIncr) {
+		bfc->counterIncr = 0;
+		--m_pauseCount[inkey];
+		if(m_pauseCount[inkey] == 0) {
+			Ptr<QbbNetDevice> device = DynamicCast<QbbNetDevice>(m_devices[inDev]);
+			printf("%lu,node,%u,%08x,%08x,setResume,%u,%u\n",Simulator::Now().GetTimeStep(),m_id,ch.sip,ch.dip,qIndex,last_upq);
+			device->SendPfc(last_upq, 1);
+			m_mmu->SetResume(inDev, qIndex);
+		}	
+	}
 }
 
 //shishi codes
 void SwitchNode::SwitchNotifyDequeue(uint32_t ifIndex, uint32_t qIndex, Ptr<Packet> p){
-	uint64_t now_time = Simulator::Now().GetTimeStep();
+	if(m_ccMode == 4) {
+		SwitchNotifyDequeue_BFC(ifIndex,qIndex,p);
+		return;
+	}
 	if(m_ccMode == 2) {
 		FlowIdTag t;
 		p->PeekPacketTag(t);
-		// cnt++;
-		//get sip dip
+
 		CustomHeader ch(CustomHeader::L2_Header | CustomHeader::L3_Header | CustomHeader::L4_Header);
 		ch.getInt = 1; // parse INT header
 		p->PeekHeader(ch);
 		uint32_t p_size = p->GetSize()- (ch.udp.ih.maxHop-ch.udp.ih.nhop) * 8;
 		if((ch.l3Prot == 0xFC || ch.l3Prot == 0xFD)  && p_size < 60)
 			p_size = 60;
-		uint32_t sip = ch.sip;
-		uint32_t dip = ch.dip;
-		uint64_t edge = ((uint64_t)sip << 32) | dip;
-		//cm->Update(edge,p_size);
-		if(m_heap.find(edge) != m_heap.end()) {
-			m_heap[edge].first += p_size;
-			m_heap[edge].second = now_time;
-		}
-		else {
-			m_heap[edge].first = p_size;
-			m_heap[edge].second = now_time;
-		}
-		uint64_t judgeFlow = m_heap[edge].first;
 
-		
 		if (qIndex != 0){
 			uint32_t inDev = t.GetFlowId();
 			// m_mmu->RemoveFromIngressAdmission(inDev, qIndex, p->GetSize());
@@ -273,45 +426,42 @@ void SwitchNode::SwitchNotifyDequeue(uint32_t ifIndex, uint32_t qIndex, Ptr<Pack
 			m_mmu->RemoveFromIngressAdmission(inDev, qIndex, p_size);
 			m_mmu->RemoveFromEgressAdmission(ifIndex, qIndex, p_size);
 			m_bytes[inDev][ifIndex][qIndex] -= p_size;
-			if (judgeFlow > 1000000){
-				ch.udp.ih.nhop = 0;
+			if (qIndex == 4){
+				// uint8_t* buf = p->GetBuffer();
+				// if (buf[PppHeader::GetStaticSize() + 9] == 0x11){ 
+				// 	IntHeader *ih = (IntHeader*)&buf[PppHeader::GetStaticSize() + 20 + 8 + 6];
+				// 	ih->SetnHopZero();
+				// }
 				PppHeader ppp;
 				Ipv4Header h;
 				bool egressCongested = m_mmu->ShouldSendCN(ifIndex, qIndex);
 				if (egressCongested){
-					printf("%08x %08x Switch SetEcn \n",sip,dip);
+					printf("%08x %08x Switch SetEcn \n",ch.sip,ch.dip);
 					p->RemoveHeader(ppp);
 					p->RemoveHeader(h);
 					h.SetEcn((Ipv4Header::EcnType)0x03);
 					p->AddHeader(h);
 					p->AddHeader(ppp);
 				}
-				
-				//printf("in switch %d, flow_size:%lu\n",h.GetCC(),judgeFlow);
 			} 
 			//CheckAndSendPfc(inDev, qIndex);
 			CheckAndSendResume(inDev, qIndex);
 		}
-		if (judgeFlow <= 1000000){
+		if (qIndex == 3){
 			uint8_t* buf = p->GetBuffer();
 			if (buf[PppHeader::GetStaticSize() + 9] == 0x11){ // udp packet
 				IntHeader *ih = (IntHeader*)&buf[PppHeader::GetStaticSize() + 20 + 8 + 6]; // ppp, ip, udp, SeqTs, INT
 				Ptr<QbbNetDevice> dev = DynamicCast<QbbNetDevice>(m_devices[ifIndex]);
-				//printf("in switch %d, flow_size:%lu\n",h.GetCC(),judgeFlow);
 				ih->PushHop(Simulator::Now().GetTimeStep(), m_txBytes[ifIndex], dev->GetQueue()->GetNBytesTotal(), dev->GetDataRate().GetBitRate());
+				// ih->PushHop(Simulator::Now().GetTimeStep(), m_txBytes1[ifIndex][qIndex], dev->GetQueue()->GetNBytes(qIndex), dev->GetDataRate().GetBitRate());//shishi
 				p_size += 8;
 				// printf("%lu,%08x,%08x,switchID=%u,ifIndex=%u,%lu,%u,%u,%.3lf\n",Simulator::Now().GetTimeStep(),ch.sip,ch.dip,m_ecmpSeed,ifIndex,m_txBytes[ifIndex],p_size,dev->GetQueue()->GetNBytesTotal(),dev->GetDataRate().GetBitRate() * 1e-9);
 			}
-			m_txBytes[ifIndex] += p_size;//p->getsize
+			uint64_t edge = ((uint64_t)ch.sip << 32) | ch.dip;
+			--m_flowTable[edge].first;
 		}
-		auto it = m_heap.begin();
-		while( (!m_heap.empty()) && (it != m_heap.end())) {
-			if((now_time - m_heap[it->first].second) > 10000) {
-				it = m_heap.erase(it);
-			}
-			else 
-				++it;
-		}
+		m_txBytes[ifIndex] += p_size;//p->getsize
+		
 		// if(cnt>100000) {
 		// 	cnt = 0;
 		// 	m_heap.clear();

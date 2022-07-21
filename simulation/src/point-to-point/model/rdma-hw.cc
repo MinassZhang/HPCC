@@ -12,6 +12,7 @@
 #include "ppp-header.h"
 #include "qbb-header.h"
 #include "cn-header.h"
+#include "ns3/BFCHeader.h"
 
 namespace ns3{
 
@@ -228,7 +229,7 @@ void RdmaHw::AddQueuePair(uint64_t size, uint16_t pg, Ipv4Address sip, Ipv4Addre
 	qp->SetBaseRtt(baseRtt);
 	qp->SetVarWin(m_var_win);
 	qp->SetAppNotifyCallback(notifyAppFinish);
-
+	// printf("%lu,addqp,%08x,%08x,%u,%u,%u\n",Simulator::Now().GetTimeStep(),sip.Get(),dip.Get(),sport,dport,pg);
 	// add qp
 	uint32_t nic_idx = GetNicIdxOfQp(qp);
 	m_nic[nic_idx].qpGrp->AddQp(qp);
@@ -271,6 +272,7 @@ void RdmaHw::AddQueuePair(uint64_t size, uint16_t pg, Ipv4Address sip, Ipv4Addre
 
 void RdmaHw::DeleteQueuePair(Ptr<RdmaQueuePair> qp){
 	// remove qp from the m_qpMap
+	// printf("%lu,deleteQp,%08x,%08x,%u,%u,%u\n",Simulator::Now().GetTimeStep(),qp->sip.Get(),qp->dip.Get(),qp->sport,qp->dport,qp->m_pg);//shishi
 	uint64_t key = GetQpKey(qp->dip.Get(), qp->sport, qp->m_pg);
 	m_qpMap.erase(key);
 }
@@ -321,7 +323,7 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch){
 	}
 	rxQp->m_ecn_source.total++;
 	rxQp->m_milestone_rx = m_ack_interval;
-
+	
 	int x = ReceiverCheckSeq(ch.udp.seq, rxQp, payload_size);
 	if (x == 1 || x == 2){ //generate ACK or NACK
 		qbbHeader seqh;
@@ -329,6 +331,11 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch){
 		seqh.SetPG(ch.udp.pg);
 		seqh.SetSport(ch.udp.dport);
 		seqh.SetDport(ch.udp.sport);
+		
+		// if(x==1)
+		// 	printf("%lu,generateAck,%08x,%08x,%u,%u,%u,%u\n",Simulator::Now().GetTimeStep(),ch.sip,ch.dip,ch.udp.sport,ch.udp.dport,ch.udp.pg,ch.udp.seq);
+		// else
+		// 	printf("%lu,generateNAck,%08x,%08x,%u,%u,%u,%u\n",Simulator::Now().GetTimeStep(),ch.sip,ch.dip,ch.udp.sport,ch.udp.dport,ch.udp.pg,ch.udp.seq);
 		seqh.SetIntHeader(ch.udp.ih);
 		if (ecnbits)
 			seqh.SetCnp();
@@ -344,6 +351,14 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch){
 
 		newp->AddHeader(head);
 		AddHeader(newp, 0x800);	// Attach PPP header
+
+		uint8_t* newbuf = newp->GetBuffer();
+		BFCHeader *newbfc = (BFCHeader*)&newbuf[PppHeader::GetStaticSize() + 20 + 8 + 6];
+		// uint8_t* buf = p->GetBuffer();
+		// BFCHeader *bfc = (BFCHeader*)&buf[PppHeader::GetStaticSize() + 20 + 8 + 6];
+		newbfc->upstreamQueue = ch.udp.pg;
+		newbfc->counterIncr = 0;
+
 		// send
 		uint32_t nic_idx = GetNicIdxOfRxQp(rxQp);
 		m_nic[nic_idx].dev->RdmaEnqueueHighPrioQ(newp);
@@ -416,9 +431,14 @@ int RdmaHw::ReceiveAck(Ptr<Packet> p, CustomHeader &ch){
 	int i;
 	Ptr<RdmaQueuePair> qp = GetQp(ch.sip, port, qIndex);
 	if (qp == NULL){
-		std::cout << "ERROR: " << "node:" << m_node->GetId() << ' ' << (ch.l3Prot == 0xFC ? "ACK" : "NACK") << " NIC cannot find the flow\n";
+		std::cout << "ERROR: " << "node:" << m_node->GetId() << ' ' << (ch.l3Prot == 0xFC ? "ACK" : "NACK") << " NIC cannot find the flow ";
+		printf("%08x,%08x,%u,%u,%u,%u\n",ch.dip,ch.sip,ch.ack.dport,ch.ack.sport,qIndex,ch.ack.seq);
 		return 0;
 	}
+	// if(ch.l3Prot == 0xFC)
+	// 	printf("%lu,ReceiveACK,node,%u,%08x,%08x,%u,%u,%u,%u\n",Simulator::Now().GetTimeStep(),m_node->GetId(),ch.dip,ch.sip,ch.ack.dport,ch.ack.sport,ch.ack.pg,ch.ack.seq);
+	// else 
+	// 	printf("%lu,ReceiveNACK,node,%u,%08x,%08x,%u,%u,%u,%u\n",Simulator::Now().GetTimeStep(),m_node->GetId(),ch.dip,ch.sip,ch.ack.dport,ch.ack.sport,ch.ack.pg,ch.ack.seq);
 	//printf("%08x %08x ",qp->sip.Get(),qp->dip.Get());
 	uint32_t nic_idx = GetNicIdxOfQp(qp);
 	Ptr<QbbNetDevice> dev = m_nic[nic_idx].dev;
@@ -461,8 +481,9 @@ int RdmaHw::ReceiveAck(Ptr<Packet> p, CustomHeader &ch){
 		uint16_t temp = ih.nhop;
 		if(temp == 0) {
 			if(qp->mlx.m_first_change) {
-				// qp->mlx.m_targetRate = qp->m_max_rate/2;
-				// qp->m_rate = qp->m_max_rate/4;
+				qp->mlx.m_targetRate = qp->m_max_rate/2;
+				qp->m_rate = qp->hp.m_curRate/2;
+				// qp->hp.m_curRate = qp->m_max_rate/2;
 				qp->mlx.m_first_change = false;
 				// printf("change to dcqcn\n");
 			}
@@ -471,12 +492,17 @@ int RdmaHw::ReceiveAck(Ptr<Packet> p, CustomHeader &ch){
 				cnp_received_mlx(qp);
 				//qp->hp.m_curRate = qp->mlx.m_targetRate;
 			}
-			// printf("%08x %08x DCQCN (%.3lf %.3lf)\n",qp->sip.Get(),qp->dip.Get(),qp->mlx.m_targetRate.GetBitRate() * 1e-9, qp->m_rate.GetBitRate() * 1e-9);
+			printf("frate,%lu,%08x,%08x,DCQCN,%.3lf,%.3lf\n",Simulator::Now().GetTimeStep(),qp->sip.Get(),qp->dip.Get(),qp->mlx.m_targetRate.GetBitRate() * 1e-9, qp->m_rate.GetBitRate() * 1e-9);
 		}
 		else {
+			if(!qp->mlx.m_first_change) {
+				// qp->hp.m_curRate = qp->m_max_rate/2;
+				// qp->m_rate = qp->m_max_rate/4;
+				qp->mlx.m_first_change = true;
+			}
 			HandleAckHp(qp, p, ch);
 			//qp->mlx.m_targetRate = qp->hp.m_curRate;
-			// printf("%08x %08x HPCC (%.3lf %.3lf)\n",qp->sip.Get(),qp->dip.Get(),qp->hp.m_curRate.GetBitRate() * 1e-9, qp->m_rate.GetBitRate() * 1e-9);
+			printf("frate,%lu,%08x,%08x,HPCC,%.3lf,%.3lf\n",Simulator::Now().GetTimeStep(),qp->sip.Get(),qp->dip.Get(),qp->hp.m_curRate.GetBitRate() * 1e-9, qp->m_rate.GetBitRate() * 1e-9);
 		}
 		
 	}
@@ -623,28 +649,35 @@ Ptr<Packet> RdmaHw::GetNxtPacket(Ptr<RdmaQueuePair> qp){
 	ppp.SetProtocol (0x0021); // EtherToPpp(0x800), see point-to-point-net-device.cc
 	p->AddHeader (ppp);
 
+	uint8_t* buf = p->GetBuffer();
+	BFCHeader *bfc = (BFCHeader*)&buf[PppHeader::GetStaticSize() + 20 + 8 + 6];
+	bfc->upstreamQueue = qp->m_pg;
+	bfc->counterIncr = 0;
+
 	// update state
 	qp->snd_nxt += payload_size;
 	qp->m_ipid++;
+
+	//shishi
+	// printf("%lu,generateUDP,%08x,%08x,%u,%u,%u,%u\n",Simulator::Now().GetTimeStep(),qp->sip.Get(),qp->dip.Get(),qp->sport,qp->dport,qp->m_pg,qp->snd_nxt);
 
 	// return
 	return p;
 }
 
 void RdmaHw::PktSent(Ptr<RdmaQueuePair> qp, Ptr<Packet> pkt, Time interframeGap){
-	// qp->lastPktSize = pkt->GetSize();
-	// UpdateNextAvail(qp, interframeGap, pkt->GetSize());
+	qp->lastPktSize = pkt->GetSize();
+	UpdateNextAvail(qp, interframeGap, pkt->GetSize());
 
 	//shishi
-	CustomHeader ch(CustomHeader::L2_Header | CustomHeader::L3_Header | CustomHeader::L4_Header);
-	ch.getInt = 1; // parse INT header
-	pkt->PeekHeader(ch);
-	uint32_t pkt_size = pkt->GetSize()- (ch.udp.ih.maxHop-ch.udp.ih.nhop) * 8;
-	if((ch.l3Prot == 0xFC || ch.l3Prot == 0xFD)  && pkt_size < 60)
-		pkt_size = 60;
-	// printf("host: %08x %08x: %u\n",ch.sip,ch.dip,pkt->GetSize());
-	qp->lastPktSize = pkt->GetSize();
-	UpdateNextAvail(qp, interframeGap, pkt_size);
+	// CustomHeader ch(CustomHeader::L2_Header | CustomHeader::L3_Header | CustomHeader::L4_Header);
+	// ch.getInt = 1; // parse INT header
+	// pkt->PeekHeader(ch);
+	// uint32_t pkt_size = pkt->GetSize()- (ch.udp.ih.maxHop-ch.udp.ih.nhop) * 8;
+	// if((ch.l3Prot == 0xFC || ch.l3Prot == 0xFD)  && pkt_size < 60)
+	// 	pkt_size = 60;
+	// qp->lastPktSize = pkt->GetSize();
+	// UpdateNextAvail(qp, interframeGap, pkt_size);
 }
 
 void RdmaHw::UpdateNextAvail(Ptr<RdmaQueuePair> qp, Time interframeGap, uint32_t pkt_size){
@@ -659,14 +692,14 @@ void RdmaHw::UpdateNextAvail(Ptr<RdmaQueuePair> qp, Time interframeGap, uint32_t
 void RdmaHw::ChangeRate(Ptr<RdmaQueuePair> qp, Ptr<Packet> p, CustomHeader &ch, DataRate new_rate){
 	#if 1
 	//shishi changes changerate_func
-	uint32_t pkt_size = qp->lastPktSize - (ch.ack.ih.maxHop-ch.ack.ih.nhop)*8;
-	if((ch.l3Prot == 0xFC || ch.l3Prot == 0xFD)  && pkt_size < 60)
-		pkt_size = 60;
-	Time sendingTime = Seconds(qp->m_rate.CalculateTxTime(pkt_size));
-	Time new_sendintTime = Seconds(new_rate.CalculateTxTime(pkt_size));
+	// uint32_t pkt_size = qp->lastPktSize - (ch.ack.ih.maxHop-ch.ack.ih.nhop)*8;
+	// if((ch.l3Prot == 0xFC || ch.l3Prot == 0xFD)  && pkt_size < 60)
+	// 	pkt_size = 60;
+	// Time sendingTime = Seconds(qp->m_rate.CalculateTxTime(pkt_size));
+	// Time new_sendintTime = Seconds(new_rate.CalculateTxTime(pkt_size));
 
-	// Time sendingTime = Seconds(qp->m_rate.CalculateTxTime(qp->lastPktSize));
-	// Time new_sendintTime = Seconds(new_rate.CalculateTxTime(qp->lastPktSize));
+	Time sendingTime = Seconds(qp->m_rate.CalculateTxTime(qp->lastPktSize));
+	Time new_sendintTime = Seconds(new_rate.CalculateTxTime(qp->lastPktSize));
 	qp->m_nextAvail = qp->m_nextAvail + new_sendintTime - sendingTime;
 	// update nic's next avail event
 	uint32_t nic_idx = GetNicIdxOfQp(qp);

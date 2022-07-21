@@ -7,6 +7,8 @@
 #include "switch-mmu.h"
 #include "pint.h"
 
+typedef std::pair<uint64_t,uint32_t> m_pair;
+
 namespace ns3 {
 
 class Packet;
@@ -21,6 +23,7 @@ class SwitchNode : public Node{
 	uint32_t m_bytes[pCnt][pCnt][qCnt]; // m_bytes[inDev][outDev][qidx] is the bytes from inDev enqueued for outDev at qidx
 	
 	uint64_t m_txBytes[pCnt]; // counter of tx bytes
+	uint64_t m_txBytes1[pCnt][qCnt]; //shishi
 
 	uint32_t m_lastPktSize[pCnt];
 	uint64_t m_lastPktTs[pCnt]; // ns
@@ -33,12 +36,23 @@ protected:
 
 	uint32_t m_ackHighPrio; // set high priority for ACK/NACK
 
+	//shishi
+	std::unordered_map<uint64_t,m_pair> m_heap;
+	uint64_t cnt;
+	uint64_t hash_seed;
+	std::unordered_map<uint64_t,m_pair> m_flowTable;
+	std::unordered_map<uint64_t,uint32_t> m_pauseCount;
+	uint32_t q_last;
+
 private:
 	int GetOutDev(Ptr<const Packet>, CustomHeader &ch);
 	void SendToDev(Ptr<Packet>p, CustomHeader &ch);
+	void SendToDev_BFC(Ptr<Packet>p, CustomHeader &ch);
+	void SendToDev1(Ptr<Packet>p, CustomHeader &ch);//shishi
 	static uint32_t EcmpHash(const uint8_t* key, size_t len, uint32_t seed);
 	void CheckAndSendPfc(uint32_t inDev, uint32_t qIndex);
 	void CheckAndSendResume(uint32_t inDev, uint32_t qIndex);
+	uint32_t AssignQueue(uint32_t port);
 public:
 	Ptr<SwitchMmu> m_mmu;
 
@@ -49,6 +63,7 @@ public:
 	void ClearTable();
 	bool SwitchReceiveFromDevice(Ptr<NetDevice> device, Ptr<Packet> packet, CustomHeader &ch);
 	void SwitchNotifyDequeue(uint32_t ifIndex, uint32_t qIndex, Ptr<Packet> p);
+	void SwitchNotifyDequeue_BFC(uint32_t ifIndex, uint32_t qIndex, Ptr<Packet> p);//shishi
 
 	// for approximate calc in PINT
 	int logres_shift(int b, int l);
