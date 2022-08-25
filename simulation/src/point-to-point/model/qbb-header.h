@@ -7,6 +7,7 @@
 #include "ns3/header.h"
 #include "ns3/buffer.h"
 #include "ns3/int-header.h"
+#include "ns3/BFCHeader.h"
 
 namespace ns3 {
 
@@ -41,6 +42,7 @@ public:
   void SetTs(uint64_t ts);
   void SetCnp();
   void SetIntHeader(const IntHeader &_ih);
+  void SetBFCHeader(const BFCHeader &_bfc);
 
 //Getters
   /**
@@ -68,7 +70,7 @@ private:
   uint16_t m_pg;
   uint32_t m_seq; // the qbb sequence number.
   IntHeader ih;
-  
+  BFCHeader bfc;
 };
 
 }; // namespace ns3

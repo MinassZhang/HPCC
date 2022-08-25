@@ -24,6 +24,7 @@
 #include "ns3/header.h"
 #include "ns3/nstime.h"
 #include "ns3/int-header.h"
+#include "ns3/BFCHeader.h"
 
 namespace ns3 {
 /**
@@ -67,6 +68,7 @@ private:
   uint16_t m_pg;
 public:
   IntHeader ih;
+  BFCHeader bfc;
 };
 
 } // namespace ns3

@@ -337,6 +337,7 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch){
 		// else
 		// 	printf("%lu,generateNAck,%08x,%08x,%u,%u,%u,%u\n",Simulator::Now().GetTimeStep(),ch.sip,ch.dip,ch.udp.sport,ch.udp.dport,ch.udp.pg,ch.udp.seq);
 		seqh.SetIntHeader(ch.udp.ih);
+		seqh.SetBFCHeader(ch.udp.bfc);
 		if (ecnbits)
 			seqh.SetCnp();
 		Ptr<Packet> newp = Create<Packet>(std::max(60-14-20-(int)seqh.GetSerializedSize(), 0));

@@ -19,6 +19,7 @@ public:
 
 	bool CheckIngressAdmission(uint32_t port, uint32_t qIndex, uint32_t psize);
 	bool CheckEgressAdmission(uint32_t port, uint32_t qIndex, uint32_t psize);
+	// bool CheckEgressAdmission_BFC(uint32_t port, uint32_t qIndex, uint32_t psize);//shishi
 	void UpdateIngressAdmission(uint32_t port, uint32_t qIndex, uint32_t psize);
 	void UpdateEgressAdmission(uint32_t port, uint32_t qIndex, uint32_t psize);
 	void RemoveFromIngressAdmission(uint32_t port, uint32_t qIndex, uint32_t psize);
@@ -40,6 +41,11 @@ public:
 	void ConfigHdrm(uint32_t port, uint32_t size);
 	void ConfigNPort(uint32_t n_port);
 	void ConfigBufferSize(uint32_t size);
+
+	//shishi
+	uint32_t AssignQueue(uint32_t port);
+	uint32_t GetActiveQueues(uint32_t port);
+	uint32_t q_last;
 
 	// config
 	uint32_t node_id;

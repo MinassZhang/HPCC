@@ -67,6 +67,7 @@ SwitchNode::SwitchNode(){
 	char const *name= s.c_str();
     unsigned long seed = AwareHash((unsigned char*)name, strlen(name), 13091204281, 228204732751, 6620830889);
     hash_seed = GenHashSeed(seed);
+	q_last = 1;
 }
 
 int SwitchNode::GetOutDev(Ptr<const Packet> p, CustomHeader &ch){
@@ -145,14 +146,14 @@ void SwitchNode::SendToDev(Ptr<Packet>p, CustomHeader &ch){
 		}else{
 			
 			if(judgeFlow > 1000000) {
-				if(m_flowTable[edge].first == 0)
+				if(m_flowTable[edge].first.first == 0)
 					qIndex = 4;
 				else
 					qIndex = (ch.l3Prot == 0x06 ? 1 : ch.udp.pg);
 			}
 			else {
 				qIndex = (ch.l3Prot == 0x06 ? 1 : ch.udp.pg); // if TCP, put to queue 1
-				++m_flowTable[edge].first;
+				++m_flowTable[edge].first.first;
 			}
 		}
 
@@ -190,8 +191,13 @@ uint32_t SwitchNode::AssignQueue(uint32_t port) {
 	Ptr<QbbNetDevice> dev = DynamicCast<QbbNetDevice>(m_devices[port]);
 	for(uint32_t queue=1;queue<qCnt;queue++) {
 		// printf("node,%d,queuerr,%u,%u,%u,%u,%u\n",node_id,queue,q_last,(queue + q_last) % qCnt,egress_bytes[port][(queue + q_last) % qCnt],paused[port][(queue + q_last) % qCnt]);
+		// uint32_t qindex = (queue + q_last) % qCnt;
+		// if(m_mmu->egress_bytes[port][qindex] == 0 && qindex != 0 && !dev->GetPause(qindex)) {
+		// 	q_last = qindex;
+		// 	return qindex;
+		// }
 		uint32_t qindex = (queue + q_last) % qCnt;
-		if(m_mmu->egress_bytes[port][qindex] == 0 && qindex != 0 && !dev->GetPause(qindex)) {
+		if(m_mmu->egress_bytes[port][qindex] == 0 && qindex!=0) {
 			q_last = qindex;
 			return qindex;
 		}
@@ -227,14 +233,17 @@ void SwitchNode::SendToDev_BFC(Ptr<Packet>p, CustomHeader &ch){
 		if (ch.l3Prot == 0xFF || ch.l3Prot == 0xFE || (m_ackHighPrio && (ch.l3Prot == 0xFD || ch.l3Prot == 0xFC))){  //QCN or PFC or NACK, go highest priority
 			qIndex = 0;
 		}else{
-			if(m_flowTable[ekey].first == 0) {
+			uint64_t timestamp = Simulator::Now().GetTimeStep() - m_flowTable[ekey].second;
+			// m_flowTable[ekey].second = Simulator::Now().GetTimeStep();
+			if(m_flowTable[ekey].first.first == 0 && timestamp > 4336) {
 				reassignQueue = true;
 			}
-			++m_flowTable[ekey].first;//size
+			++m_flowTable[ekey].first.first;//size
 			if(reassignQueue) {
-				m_flowTable[ekey].second = AssignQueue(idx);//queue seq
+				m_flowTable[ekey].first.second = AssignQueue(idx);//queue seq
 			}
-			qIndex = m_flowTable[ekey].second;
+			qIndex = m_flowTable[ekey].first.second;
+			// printf("%lu,node,%u,%08x,%08x,egress,%d,qindex,%u,bytes,%u,timestamp,%lu\n",Simulator::Now().GetTimeStep(),m_id,ch.sip,ch.dip,idx,qIndex,m_mmu->egress_bytes[idx][qIndex],timestamp);
 		}
 
 		uint32_t pkt_size = p->GetSize();
@@ -242,32 +251,36 @@ void SwitchNode::SendToDev_BFC(Ptr<Packet>p, CustomHeader &ch){
 			if (m_mmu->CheckIngressAdmission(inDev, qIndex, pkt_size) && m_mmu->CheckEgressAdmission(idx, qIndex, pkt_size)){			// Admission control
 				m_mmu->UpdateIngressAdmission(inDev, qIndex, pkt_size);
 				m_mmu->UpdateEgressAdmission(idx, qIndex, pkt_size);
-				printf("%lu,node_revei,%u,%08x,%08x,%u,%u\n",Simulator::Now().GetTimeStep(),m_id,ch.sip,ch.dip,qIndex,ch.udp.seq);
-				Ptr<QbbNetDevice> dev = DynamicCast<QbbNetDevice>(m_devices[idx]);
-				Ptr<QbbNetDevice> device = DynamicCast<QbbNetDevice>(m_devices[inDev]);
-				uint32_t thre = 2*dev->GetDataRate().GetBitRate() * 1e-6;
-				uint32_t Nactive = 0;
-				for(int i=0;i<qCnt;i++) {
-					if(m_mmu->egress_bytes[idx][i] > 0 && !dev->GetPause(i)){
-						++Nactive;
-					}
-					// printf("%lu,node,%u,%08x,%08x,qindex,%u,bytes,%u,pause,%u,Nactive,%u\n",Simulator::Now().GetTimeStep(),m_id,ch.sip,ch.dip,i,m_mmu->egress_bytes[idx][i],dev->GetPause(i),Nactive);
-				}
-				// printf("final,%lu,node,%u,%08x,%08x,Nactive,%u\n",Simulator::Now().GetTimeStep(),m_id,ch.sip,ch.dip,Nactive);
-				if(m_mmu->egress_bytes[idx][qIndex] * Nactive> thre) {
-					printf("%lu,node,%u,%08x,%08x,thre,%u,%u,%u\n",Simulator::Now().GetTimeStep(),m_id,ch.sip,ch.dip,thre,Nactive,m_mmu->egress_bytes[idx][qIndex]);
-					bfc->counterIncr=1;
-					++m_pauseCount[inkey];
-					if(m_pauseCount[inkey] == 1) {
-						printf("%lu,node,%u,%08x,%08x,sendPFC,%u,%u,%u,%u,%u\n",Simulator::Now().GetTimeStep(),m_id,ch.sip,ch.dip,m_mmu->egress_bytes[idx][qIndex],Nactive,thre,bfc->upstreamQueue,qIndex);
-						device->SendPfc(bfc->upstreamQueue, 0);
-						m_mmu->SetPause(inDev, qIndex);
-					}
-				}
+				m_flowTable[ekey].second = Simulator::Now().GetTimeStep();
+				// printf("%lu,node_revei,%u,%08x,%08x,%u,%u\n",Simulator::Now().GetTimeStep(),m_id,ch.sip,ch.dip,qIndex,ch.udp.seq);
 			}else{
 				return; // Drop
 			}
 			// CheckAndSendPfc(inDev, qIndex);
+			Ptr<QbbNetDevice> dev = DynamicCast<QbbNetDevice>(m_devices[idx]);
+			Ptr<QbbNetDevice> device = DynamicCast<QbbNetDevice>(m_devices[inDev]);
+			uint32_t thre = 2*dev->GetDataRate().GetBitRate() * 1e-6 / 8;
+			uint32_t Nactive = 0;
+			for(int i=0;i<qCnt;i++) {
+				// printf("%lu,node,%u,%08x,%08x,egress,%d,qindex,%u,bytes,%u,pause,%u,Nactive,%u\n",Simulator::Now().GetTimeStep(),m_id,ch.sip,ch.dip,idx,i,m_mmu->egress_bytes[idx][i],dev->GetPause(i),Nactive);
+				if(m_mmu->egress_bytes[idx][i] > 0 && !dev->GetPause(i)){
+					++Nactive;
+				}
+				// if(m_mmu->egress_bytes[idx][i] == 0 && dev->GetPause(i))
+				// 	printf("%lu,node,%u,%08x,%08x,port,%d,queue,%d\n",Simulator::Now().GetTimeStep(),m_id,ch.sip,ch.dip,idx,i,m_mmu->egress_bytes[idx][i]);
+				// printf("%lu,node,%u,%08x,%08x,qindex,%u,bytes,%u,pause,%u,Nactive,%u\n",Simulator::Now().GetTimeStep(),m_id,ch.sip,ch.dip,i,m_mmu->egress_bytes[idx][i],dev->GetPause(i),Nactive);
+			}
+			// printf("final,%lu,node,%u,%08x,%08x,Nactive,%u\n",Simulator::Now().GetTimeStep(),m_id,ch.sip,ch.dip,Nactive);
+			if(m_mmu->egress_bytes[idx][qIndex] * Nactive> thre) {
+				// printf("%lu,node,%u,%08x,%08x,thre,%u,%u,%u\n",Simulator::Now().GetTimeStep(),m_id,ch.sip,ch.dip,thre,Nactive,m_mmu->egress_bytes[idx][qIndex]);
+				bfc->counterIncr=1;
+				++m_pauseCount[inkey];
+				if(m_pauseCount[inkey] == 1) {
+					// printf("%lu,node,%u,%08x,%08x,sendPFC,%u,%u,%u,%u,%u,%u\n",Simulator::Now().GetTimeStep(),m_id,ch.sip,ch.dip,m_mmu->egress_bytes[idx][qIndex],Nactive,thre,bfc->upstreamQueue,qIndex,ch.udp.seq);
+					device->SendPfc(bfc->upstreamQueue, 0);
+					m_mmu->SetPause(inDev, qIndex);
+				}
+			}
 		}
 		// bfc->upstreamQueue = qIndex;
 		m_bytes[inDev][idx][qIndex] += (pkt_size);
@@ -374,7 +387,7 @@ void SwitchNode::SwitchNotifyDequeue_BFC(uint32_t ifIndex, uint32_t qIndex, Ptr<
 	uint32_t fid = ch.sip | ch.dip | ch.l3Prot;
 	uint32_t hash_fid = MurmurHash2((unsigned char*)(&fid),4,hash_seed);
 	uint64_t ekey = (uint64_t)hash_fid | (((uint64_t)ifIndex) << 32);
-	--m_flowTable[ekey].first;
+	--m_flowTable[ekey].first.first;
 
 	FlowIdTag t;
 	p->PeekPacketTag(t);
@@ -387,6 +400,7 @@ void SwitchNode::SwitchNotifyDequeue_BFC(uint32_t ifIndex, uint32_t qIndex, Ptr<
 		m_mmu->RemoveFromIngressAdmission(inDev, qIndex, p->GetSize());
 		m_mmu->RemoveFromEgressAdmission(ifIndex, qIndex,  p->GetSize());
 		m_bytes[inDev][ifIndex][qIndex] -=  p->GetSize();
+		m_flowTable[ekey].second = Simulator::Now().GetTimeStep();
 	}
 	uint32_t last_upq = bfc->upstreamQueue;
 	bfc->upstreamQueue = qIndex;
@@ -395,7 +409,10 @@ void SwitchNode::SwitchNotifyDequeue_BFC(uint32_t ifIndex, uint32_t qIndex, Ptr<
 		--m_pauseCount[inkey];
 		if(m_pauseCount[inkey] == 0) {
 			Ptr<QbbNetDevice> device = DynamicCast<QbbNetDevice>(m_devices[inDev]);
-			printf("%lu,node,%u,%08x,%08x,setResume,%u,%u\n",Simulator::Now().GetTimeStep(),m_id,ch.sip,ch.dip,qIndex,last_upq);
+			// printf("%lu,node,%u,%08x,%08x,setResume,%u,%u,%u\n",Simulator::Now().GetTimeStep(),m_id,ch.sip,ch.dip,qIndex,last_upq,ch.udp.seq);
+			// for(int i=0;i<qCnt;i++) {
+			// 	printf("%lu,node,%u,%08x,%08x,egress,%d,qindex,%u,bytes,%u\n",Simulator::Now().GetTimeStep(),m_id,ch.sip,ch.dip,ifIndex,i,m_mmu->egress_bytes[ifIndex][i]);
+			// }
 			device->SendPfc(last_upq, 1);
 			m_mmu->SetResume(inDev, qIndex);
 		}	
@@ -458,7 +475,7 @@ void SwitchNode::SwitchNotifyDequeue(uint32_t ifIndex, uint32_t qIndex, Ptr<Pack
 				// printf("%lu,%08x,%08x,switchID=%u,ifIndex=%u,%lu,%u,%u,%.3lf\n",Simulator::Now().GetTimeStep(),ch.sip,ch.dip,m_ecmpSeed,ifIndex,m_txBytes[ifIndex],p_size,dev->GetQueue()->GetNBytesTotal(),dev->GetDataRate().GetBitRate() * 1e-9);
 			}
 			uint64_t edge = ((uint64_t)ch.sip << 32) | ch.dip;
-			--m_flowTable[edge].first;
+			--m_flowTable[edge].first.first;
 		}
 		m_txBytes[ifIndex] += p_size;//p->getsize
 		

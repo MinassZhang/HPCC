@@ -93,7 +93,7 @@ SeqTsHeader::GetSerializedSize (void) const
 	return GetHeaderSize();
 }
 uint32_t SeqTsHeader::GetHeaderSize(void){
-	return 6 + IntHeader::GetStaticSize();
+	return 6 + IntHeader::GetStaticSize() + BFCHeader::GetStaticSize();
 }
 
 void
@@ -105,6 +105,7 @@ SeqTsHeader::Serialize (Buffer::Iterator start) const
 
   // write IntHeader
   ih.Serialize(i);
+  bfc.Serialize(i);
 }
 uint32_t
 SeqTsHeader::Deserialize (Buffer::Iterator start)
@@ -115,6 +116,7 @@ SeqTsHeader::Deserialize (Buffer::Iterator start)
 
   // read IntHeader
   ih.Deserialize(i);
+  bfc.Deserialize(i);
   return GetSerializedSize ();
 }
 

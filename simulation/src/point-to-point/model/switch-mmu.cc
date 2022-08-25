@@ -11,6 +11,7 @@
 #include "ns3/simulator.h"
 #include "ns3/random-variable.h"
 #include "switch-mmu.h"
+#include <random>
 
 NS_LOG_COMPONENT_DEFINE("SwitchMmu");
 namespace ns3 {
@@ -25,7 +26,7 @@ namespace ns3 {
 		buffer_size = 12 * 1024 * 1024;
 		reserve = 4 * 1024;
 		resume_offset = 3 * 1024;
-
+		q_last = 0;
 		// headroom
 		shared_used_bytes = 0;
 		memset(hdrm_bytes, 0, sizeof(hdrm_bytes));
@@ -35,6 +36,7 @@ namespace ns3 {
 	}
 	bool SwitchMmu::CheckIngressAdmission(uint32_t port, uint32_t qIndex, uint32_t psize){
 		if (psize + hdrm_bytes[port][qIndex] > headroom[port] && psize + GetSharedUsed(port, qIndex) > GetPfcThreshold(port)){
+			printf("NoAdmission,%u,%u,%u,%u,%u\n",psize,hdrm_bytes[port][qIndex],headroom[port],GetSharedUsed(port, qIndex),GetPfcThreshold(port));
 			printf("%lu %u Drop: queue:%u,%u: Headroom full\n", Simulator::Now().GetTimeStep(), node_id, port, qIndex);
 			for (uint32_t i = 1; i < 64; i++)
 				printf("(%u,%u)", hdrm_bytes[i][3], ingress_bytes[i][3]);
@@ -97,6 +99,7 @@ namespace ns3 {
 		return used > reserve ? used - reserve : 0;
 	}
 	bool SwitchMmu::ShouldSendCN(uint32_t ifindex, uint32_t qIndex){
+		printf("nodeid,port,queue,time,egress,kmin,kmax,%u,%u,%u,%lu,%u,%u,%u\n",node_id,ifindex,qIndex,Simulator::Now().GetTimeStep(),egress_bytes[ifindex][qIndex],kmin[ifindex],kmax[ifindex]);//shishi
 		if (qIndex == 0)
 			return false;
 		if (egress_bytes[ifindex][qIndex] > kmax[ifindex])
@@ -126,5 +129,30 @@ namespace ns3 {
 	}
 	void SwitchMmu::ConfigBufferSize(uint32_t size){
 		buffer_size = size;
+	}
+
+	//shishi
+	uint32_t SwitchMmu::AssignQueue(uint32_t port) {
+		for(uint32_t queue=1;queue<qCnt;queue++) {
+			// printf("node,%d,queuerr,%u,%u,%u,%u,%u\n",node_id,queue,q_last,(queue + q_last) % qCnt,egress_bytes[port][(queue + q_last) % qCnt],paused[port][(queue + q_last) % qCnt]);
+			uint32_t qindex = (queue + q_last) % qCnt;
+			if(egress_bytes[port][qindex] == 0 && qindex != 0) {
+				q_last = qindex;
+				return qindex;
+			}
+		}
+		std::random_device rd;
+		std::default_random_engine e(rd());
+		std::uniform_int_distribution<unsigned> u(1,qCnt-1);
+		return u(e);
+	}
+
+	uint32_t SwitchMmu::GetActiveQueues(uint32_t port) {
+		uint32_t num = 0;
+		for(int i=0;i<qCnt;i++) {
+			if(egress_bytes[port][i]>0 && !paused[port][i])
+				++num;
+		}
+		return num;
 	}
 }

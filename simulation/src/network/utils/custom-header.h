@@ -23,6 +23,7 @@
 
 #include "ns3/header.h"
 #include "ns3/int-header.h"
+#include "ns3/BFCHeader.h"
 
 namespace ns3 {
 /**
@@ -108,6 +109,7 @@ public:
 		  uint16_t pg;
 		  uint32_t seq;
 		  IntHeader ih;
+      BFCHeader bfc;
 	  } udp;
 	  // CnHeader
 	  struct {
@@ -124,6 +126,7 @@ public:
 		  uint16_t pg;
 		  uint32_t seq; // the qbb sequence number.
 		  IntHeader ih;
+      BFCHeader bfc;
 	  } ack;
 	  // PauseHeader
 	  struct {

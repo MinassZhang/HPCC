@@ -46,7 +46,7 @@
 #include "ns3/seq-ts-header.h"
 #include "ns3/pointer.h"
 #include "ns3/custom-header.h"
-#include "ns3/BFCHeader.h"
+// #include "ns3/BFCHeader.h"
 
 #include <iostream>
 
@@ -287,7 +287,7 @@ namespace ns3 {
 				CustomHeader ch(CustomHeader::L2_Header | CustomHeader::L3_Header | CustomHeader::L4_Header);
 				ch.getInt = 0;
 				p->PeekHeader(ch);
-				printf("%lu,trans,host,%u,%08x,%08x,%u,%u\n",Simulator::Now().GetTimeStep(),m_node->GetId(),ch.sip,ch.dip,qIndex,ch.udp.seq);
+				// printf("%lu,trans,host,%u,%08x,%08x,%u,%u\n",Simulator::Now().GetTimeStep(),m_node->GetId(),ch.sip,ch.dip,qIndex,ch.udp.seq);
 				
 				// transmit
 				m_traceQpDequeue(p, lastQp);
@@ -333,7 +333,7 @@ namespace ns3 {
 				CustomHeader ch(CustomHeader::L2_Header | CustomHeader::L3_Header | CustomHeader::L4_Header);
 				ch.getInt = 0;
 				p->PeekHeader(ch);
-				printf("%lu,trans,switch,%u,%08x,%08x,%u,%u\n",Simulator::Now().GetTimeStep(),m_node->GetId(),ch.sip,ch.dip,qIndex,ch.udp.seq);
+				// printf("%lu,trans,switch,%u,%08x,%08x,%u,%u\n",Simulator::Now().GetTimeStep(),m_node->GetId(),ch.sip,ch.dip,qIndex,ch.udp.seq);
 
 				m_traceDequeue(p, qIndex);
 				TransmitStart(p);
@@ -396,11 +396,11 @@ namespace ns3 {
 			unsigned qIndex = ch.pfc.qIndex;
 			if (ch.pfc.time > 0){
 				m_tracePfc(1);
-				printf("%lu,node,%u,%u,getPFC,%u\n",Simulator::Now().GetTimeStep(),m_node->GetId(),m_node->GetNodeType(),qIndex);
+				// printf("%lu,node,%u,%u,getPFC,%u\n",Simulator::Now().GetTimeStep(),m_node->GetId(),m_node->GetNodeType(),qIndex);
 				m_paused[qIndex] = true;
 			}else{
 				m_tracePfc(0);
-				printf("%lu,node,%u,%u,getResume,%u\n",Simulator::Now().GetTimeStep(),this->m_node->GetId(),m_node->GetNodeType(),qIndex);
+				// printf("%lu,node,%u,%u,getResume,%u\n",Simulator::Now().GetTimeStep(),this->m_node->GetId(),m_node->GetNodeType(),qIndex);
 				Resume(qIndex);
 			}
 		}else { // non-PFC packets (data, ACK, NACK, CNP...)
@@ -448,26 +448,30 @@ namespace ns3 {
 		AddHeader(p, 0x800);
 		CustomHeader ch(CustomHeader::L2_Header | CustomHeader::L3_Header | CustomHeader::L4_Header);
 		p->PeekHeader(ch);
+		// if(type == 0)
+			// printf("%lu,node,%u,sendPFC,%u\n",Simulator::Now().GetTimeStep(),m_node->GetId(),qIndex);
+		// else
+			// printf("%lu,node,%u,sendResume,%u\n",Simulator::Now().GetTimeStep(),m_node->GetId(),qIndex);
 		SwitchSend(0, p, ch);
 	}
 
-	void QbbNetDevice::SendPfc_BFC(uint32_t qIndex, uint32_t type, uint32_t dip){
-		Ptr<Packet> p = Create<Packet>(0);
-		PauseHeader pauseh((type == 0 ? m_pausetime : 0), m_queue->GetNBytes(qIndex), qIndex);
-		p->AddHeader(pauseh);
-		Ipv4Header ipv4h;  // Prepare IPv4 header
-		ipv4h.SetProtocol(0xFE);
-		ipv4h.SetSource(m_node->GetObject<Ipv4>()->GetAddress(m_ifIndex, 0).GetLocal());
-		ipv4h.SetDestination(Ipv4Address(dip));
-		ipv4h.SetPayloadSize(p->GetSize());
-		ipv4h.SetTtl(1);
-		ipv4h.SetIdentification(UniformVariable(0, 65536).GetValue());
-		p->AddHeader(ipv4h);
-		AddHeader(p, 0x800);
-		CustomHeader ch(CustomHeader::L2_Header | CustomHeader::L3_Header | CustomHeader::L4_Header);
-		p->PeekHeader(ch);
-		SwitchSend(0, p, ch);
-	}
+	// void QbbNetDevice::SendPfc_BFC(uint32_t qIndex, uint32_t type, uint32_t dip){
+	// 	Ptr<Packet> p = Create<Packet>(0);
+	// 	PauseHeader pauseh((type == 0 ? m_pausetime : 0), m_queue->GetNBytes(qIndex), qIndex);
+	// 	p->AddHeader(pauseh);
+	// 	Ipv4Header ipv4h;  // Prepare IPv4 header
+	// 	ipv4h.SetProtocol(0xFE);
+	// 	ipv4h.SetSource(m_node->GetObject<Ipv4>()->GetAddress(m_ifIndex, 0).GetLocal());
+	// 	ipv4h.SetDestination(Ipv4Address(dip));
+	// 	ipv4h.SetPayloadSize(p->GetSize());
+	// 	ipv4h.SetTtl(1);
+	// 	ipv4h.SetIdentification(UniformVariable(0, 65536).GetValue());
+	// 	p->AddHeader(ipv4h);
+	// 	AddHeader(p, 0x800);
+	// 	CustomHeader ch(CustomHeader::L2_Header | CustomHeader::L3_Header | CustomHeader::L4_Header);
+	// 	p->PeekHeader(ch);
+	// 	SwitchSend(0, p, ch);
+	// }
 
 	bool
 		QbbNetDevice::Attach(Ptr<QbbChannel> ch)

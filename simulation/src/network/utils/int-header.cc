@@ -91,4 +91,10 @@ void IntHeader::SetPower(uint16_t power){
 	}
 }
 
+//shishi
+void IntHeader::SetnHopZero() {
+	nhop = 0;
+	for (uint32_t i = 0; i < maxHop; i++)
+		hop[i] = {0};
+}
 }

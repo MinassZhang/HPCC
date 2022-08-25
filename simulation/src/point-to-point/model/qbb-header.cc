@@ -50,6 +50,9 @@ namespace ns3 {
 	void qbbHeader::SetIntHeader(const IntHeader &_ih){
 		ih = _ih;
 	}
+	void qbbHeader::SetBFCHeader(const BFCHeader &_bfc){
+		bfc = _bfc;
+	}
 
 	uint16_t qbbHeader::GetPG() const
 	{
@@ -96,7 +99,7 @@ namespace ns3 {
 	}
 	uint32_t qbbHeader::GetSerializedSize(void)  const
 	{
-		return GetBaseSize() + IntHeader::GetStaticSize();
+		return GetBaseSize() + IntHeader::GetStaticSize() + BFCHeader::GetStaticSize();
 	}
 	uint32_t qbbHeader::GetBaseSize() {
 		qbbHeader tmp;
@@ -113,6 +116,7 @@ namespace ns3 {
 
 		// write IntHeader
 		ih.Serialize(i);
+		bfc.Serialize(i);
 	}
 
 	uint32_t qbbHeader::Deserialize(Buffer::Iterator start)
@@ -126,6 +130,7 @@ namespace ns3 {
 
 		// read IntHeader
 		ih.Deserialize(i);
+		bfc.Deserialize(i);
 		return GetSerializedSize();
 	}
 }; // namespace ns3

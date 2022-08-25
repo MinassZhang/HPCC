@@ -7,7 +7,8 @@
 #include "switch-mmu.h"
 #include "pint.h"
 
-typedef std::pair<uint64_t,uint32_t> m_pair;
+typedef std::pair<uint64_t,uint32_t> m_pair;//num,queue
+typedef std::pair<m_pair,uint64_t> m_data;//,timestep
 
 namespace ns3 {
 
@@ -40,7 +41,8 @@ protected:
 	std::unordered_map<uint64_t,m_pair> m_heap;
 	uint64_t cnt;
 	uint64_t hash_seed;
-	std::unordered_map<uint64_t,m_pair> m_flowTable;
+	std::unordered_map<uint64_t,m_data> m_flowTable;//size qindex time
+	// std::unordered_map<uint64_t,uint64_t> m_timestamp;
 	std::unordered_map<uint64_t,uint32_t> m_pauseCount;
 	uint32_t q_last;
 

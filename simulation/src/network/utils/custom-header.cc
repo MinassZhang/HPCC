@@ -162,6 +162,7 @@ void CustomHeader::Serialize (Buffer::Iterator start) const{
 		  i.WriteHtonU32 (udp.seq);
 		  i.WriteHtonU16 (udp.pg);
 		  udp.ih.Serialize(i);
+		  udp.bfc.Serialize(i);
 	  }else if (l3Prot == 0xFF){ // CNP
 		  i.WriteU8(cnp.qIndex);
 		  i.WriteU16(cnp.fid);
@@ -175,6 +176,7 @@ void CustomHeader::Serialize (Buffer::Iterator start) const{
 		  i.WriteU16(ack.pg);
 		  i.WriteU32(ack.seq);
 		  udp.ih.Serialize(i);
+		  udp.bfc.Serialize(i);
 	  }else if (l3Prot == 0xFE){ // PFC
 		  i.WriteU32 (pfc.time);
 		  i.WriteU32 (pfc.qlen);
@@ -295,7 +297,7 @@ CustomHeader::Deserialize (Buffer::Iterator start)
 		  udp.pg =  i.ReadNtohU16 ();
 		  if (getInt)
 			  udp.ih.Deserialize(i);
-
+		  udp.bfc.Deserialize(i);
 		  l4Size = GetUdpHeaderSize();
 	  }else if (l3Prot == 0xFF){
 		  cnp.qIndex = i.ReadU8();
@@ -312,6 +314,7 @@ CustomHeader::Deserialize (Buffer::Iterator start)
 		  ack.seq = i.ReadU32();
 		  if (getInt)
 			  ack.ih.Deserialize(i);
+		  ack.bfc.Deserialize(i);
 		  l4Size = GetAckSerializedSize();
 	  }else if (l3Prot == 0xFE){ // PFC
 		  pfc.time = i.ReadU32 ();
@@ -329,11 +332,11 @@ uint8_t CustomHeader::GetIpv4EcnBits (void) const{
 }
 
 uint32_t CustomHeader::GetAckSerializedSize(void){
-	return sizeof(ack.sport) + sizeof(ack.dport) + sizeof(ack.flags) + sizeof(ack.pg) + sizeof(ack.seq) + IntHeader::GetStaticSize();
+	return sizeof(ack.sport) + sizeof(ack.dport) + sizeof(ack.flags) + sizeof(ack.pg) + sizeof(ack.seq) + IntHeader::GetStaticSize() + BFCHeader::GetStaticSize();
 }
 
 uint32_t CustomHeader::GetUdpHeaderSize(void){
-	return 8 + sizeof(udp.pg) + sizeof(udp.seq) + IntHeader::GetStaticSize();
+	return 8 + sizeof(udp.pg) + sizeof(udp.seq) + IntHeader::GetStaticSize() + BFCHeader::GetStaticSize();
 }
 
 uint32_t CustomHeader::GetStaticWholeHeaderSize(void){

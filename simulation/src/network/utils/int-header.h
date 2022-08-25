@@ -108,6 +108,9 @@ public:
 	uint64_t GetTs(void);
 	uint16_t GetPower(void);
 	void SetPower(uint16_t);
+
+	//shishi
+	void SetnHopZero();
 };
 
 }

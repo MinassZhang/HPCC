@@ -129,6 +129,7 @@ uint64_t RdmaQueuePair::GetWin(){
 	uint64_t w;
 	if (m_var_win){
 		w = m_win * m_rate.GetBitRate() / m_max_rate.GetBitRate();
+		// printf("%lu,GetWin,%u,%.3lf,%.3lf,%lu,",Simulator::Now().GetTimeStep(),m_win,m_rate.GetBitRate()* 1e-9,m_max_rate.GetBitRate()* 1e-9,w);
 		if (w == 0)
 			w = 1; // must > 0
 	}else{

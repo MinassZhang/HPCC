@@ -80,7 +80,8 @@ public:
 	Ptr<Packet> GetNxtPacket(Ptr<RdmaQueuePair> qp); // get next packet to send, inc snd_nxt
 	void PktSent(Ptr<RdmaQueuePair> qp, Ptr<Packet> pkt, Time interframeGap);
 	void UpdateNextAvail(Ptr<RdmaQueuePair> qp, Time interframeGap, uint32_t pkt_size);
-	void ChangeRate(Ptr<RdmaQueuePair> qp, DataRate new_rate);
+	// void ChangeRate(Ptr<RdmaQueuePair> qp, DataRate new_rate);
+	void ChangeRate(Ptr<RdmaQueuePair> qp, Ptr<Packet> p, CustomHeader &ch, DataRate new_rate);
 	/******************************
 	 * Mellanox's version of DCQCN
 	 *****************************/
